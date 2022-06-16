@@ -1,8 +1,4 @@
 # Byte-Dungeon
-Virtual tabletop built with Rust and WebAssembly
+Virtual tabletop built with Rust and WebAssembly created by Sebastian Colon
 
-Created by Sebastian Colon
-
-CSS 497 Capstone
-
-June 16, 2022
+June 16, 2022 - CSS 497 Capstone

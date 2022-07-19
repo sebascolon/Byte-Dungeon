@@ -1,6 +1,7 @@
 import * as wasm from "byte-dungeon";
+import { draw_lines } from "./startup_gfx";
 
-//wasm.greet();
+// wasm.greet();
 
 const Application = PIXI.Application;
 const Graphics = PIXI.Graphics;
@@ -14,7 +15,7 @@ const app = new Application({
 
 //app.renderer.backgroundColor = 0xFFC0CB;
 app.renderer.backgroundColor = 0x1f1e1c;
-app.renderer.resize(window.innerWidth-5, window.innerHeight-5);
+app.renderer.resize(window.innerWidth-2, window.innerHeight-2);
 app.renderer.view.style.position = 'absolute';
 
 const rectang = new Graphics();
@@ -23,7 +24,6 @@ rectang.beginFill(0xFFD8E7)
 .endFill();
 
 app.stage.addChild(rectang);
-
 document.body.appendChild(app.view);
 
 document.addEventListener('keydown', logKey);
@@ -73,36 +73,49 @@ app.stage.addChild(input_text);
         }, 550);
 
 function logKey(e) {
-  input_text.text = ` ${e.code}`;
-  load_template();
+  //let width = prompt("Please enter grid width");
+  //let height = prompt("Please enter grid height");
+
+  app.stage.removeChild(rectang);
+  app.stage.removeChild(basicText);
+  app.stage.removeChild(input_text);
+  draw_lines(app, 30, 15, wasm.get_template());
+  document.removeEventListener('keydown', logKey);
+  const texture = PIXI.Texture.from('assets/knight.png');
+  texture.baseTexture.scaleMode = PIXI.SCALE_MODES.NEAREST;
+  const player = new PIXI.Sprite(texture);
+  player.scale.set(3);
+  player.anchor.set(0.5); 
+  player.interactive = true;
+  player.buttonMode = true;
+  player
+    .on('pointerdown', onDragStart)
+    .on('pointerup', onDragEnd)
+    .on('pointerupoutside', onDragEnd)
+    .on('pointermove', onDragMove);
+  app.stage.addChild(player);
 }
 
-var rows = 20;
-for (let i = (window.innerWidth/rows); i < window.innerWidth; i+=(window.innerWidth/rows))
-{
-  let myGraph = new PIXI.Graphics();
-
-  myGraph.position.set(0, 0);
-
-  myGraph.lineStyle(1, 0xAAAAAA)
-  .moveTo(i, 0)
-  .lineTo(i, 1000);
-
-  app.stage.addChild(myGraph);
-
-  let myGraph2 = new PIXI.Graphics();
-
-  myGraph2.position.set(0, 0);
-
-  myGraph2.lineStyle(1, 0xFFFFFF)
-  .moveTo(0, i)
-  .lineTo(window.innerWidth, i);
-
-  app.stage.addChild(myGraph2);
+function onDragStart(event) {
+  // store a reference to the data
+  // the reason for this is because of multitouch
+  // we want to track the movement of this particular touch
+  this.data = event.data;
+  this.alpha = 0.5;
+  this.dragging = true;
 }
 
-function load_template()
-{
-  input_text.text = ` ${e.code}`;
+function onDragEnd() {
+  this.alpha = 1;
+  this.dragging = false;
+  // set the interaction data to null
+  this.data = null;
+}
 
+function onDragMove() {
+  if (this.dragging) {
+      const newPosition = this.data.getLocalPosition(this.parent);
+      this.x = newPosition.x;
+      this.y = newPosition.y;
+  }
 }

@@ -3,16 +3,51 @@
   <head>
     <meta charset="utf-8">
     <title>Byte Dungeon</title>
-    <style> *
-    {
-      padding: 0;
-      margin: 0;
-    }
-      </style>
+    
+  <link rel="stylesheet" href="global.css">
   </head>
-  <body>
+  <body style="width: 100vw; height: 100vh; position: relative;">
     <noscript>This page contains webassembly and javascript content, please enable javascript in your browser.</noscript>
     <script src="./node_modules/pixi.js/dist/browser/pixi.min.js"></script>
     <script src="./bootstrap.js"></script>
+    
+    <div id="locator" style=" height:15%; width:15%; overflow:auto; float:left; background-color: rgb(86, 88, 76) ">
+      <p id="session_id" class="log">Session: Offline</p>
+      <p id="user_id" class="log">User: Signed Out</p>
+      <p id="role_id" class="log">Role: Not Assigned</p>
+      <div style="bottom: 0px; height: 10%; padding: 2%;" >
+        <form name="chat" id="chat">
+          <input name="msg" type="text" id="msg" style="float: left; width:75%; border-style: inset;" required disabled>
+          <input type="submit" id="sub" value="Submit" style="width: 20%; margin-left: 2%;" disabled>
+        </form>
+      </div>
+    </div>
+
+    <div style="height:15%; width:60%; overflow:auto; float:left; background-color: rgb(39, 40, 34)">
+      <div id="console" style="float: left;">
+      </div>
+      <div style="float: right; padding: 1.5vh;">
+        <button id="roll-button"> 
+          <p id="roll-button-label" style="color: rgb(255, 255, 255);">Roll to Register</p>
+        </button>
+      </div>
+    </div>
+
+    <div id="panel" style="height:100%; width:25%; overflow-x: hidden; float:right; background-color: rgb(115,100,88)">
+      <div id="card" style="height: 0%; overflow-x: hidden; overflow-y: auto; background-color: rgb(220, 220, 220)" >
+      </div>
+      <button id="button1" class="collapsible" disabled>Create a game</button>
+      <div id="content1" class="content"></div>
+      <button id="button2" class="collapsible" disabled>Join a game</button>
+      <div id="content2" class="content"></div>
+      <button id="button3" class="collapsible" disabled>Edit a game</button>
+      <div id="content3" class="content"></div>
+      <button id="button4" class="collapsible" disabled>Host a game</button>
+      <div id="content4" class="content"></div>
+    </div>
+
+    <div style="height:85%; width:75%; overflow:auto; float:left; background-color: rgb(42, 42, 42)">
+      <canvas id="grid"></canvas>
+    </div>
   </body>
 </html>

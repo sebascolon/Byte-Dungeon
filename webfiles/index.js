@@ -3,7 +3,7 @@ import { getAuth, GoogleAuthProvider, reload, signInWithPopup } from 'firebase/a
 import { getFirestore, doc, getDoc, setDoc, addDoc, collection, documentId } from "firebase/firestore";
 
 import { io } from "socket.io-client"
-import * as wasm from "byte-dungeon";
+import * as wasm from "./bd-pack/byte_dungeon"
 
 const socket = io('https://western-rider-361904.wm.r.appspot.com');
 socket.on("connect", () => {

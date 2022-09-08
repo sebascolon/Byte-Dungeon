@@ -1,5 +1,12 @@
-{
+{ 
+  "name": "byte-dungeon-websocket",
+  "description": "Websocket for Byte Dungeon Websocket",
+  "scripts": {
+    "deploy": "gcloud app deploy",
+    "start": "node server.js"
+  },
   "dependencies": {
+    "express": "^4.18.1",
     "socket.io": "^4.5.1"
   }
 }

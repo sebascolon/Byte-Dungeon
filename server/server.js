@@ -1,8 +1,9 @@
-const io = require('socket.io')(3000, {
-    cors: {
-        origin: '*'
-    }    
-})
+
+const express = require('express');
+const app = express();
+const server = require('http').Server(app);
+const io = require('socket.io')(server);
+const path = require('path');
 
 let sample_session = {
     name: new String(),
@@ -16,6 +17,12 @@ let sample_session = {
 }
 
 var game_keys = new Map();
+
+app.use(express.static('public'))
+app.get('/', function(req, res) {
+    res.sendFile(path.join(__dirname, '/index.html'));
+  });
+  
 
 io.on('connection', socket => {
     socket.on("startHosting", (room_id, uid, set, game_name) => {
@@ -212,3 +219,14 @@ io.on('connection', socket => {
         socket.broadcast.emit("executeRequest", req);
     });
 })
+
+if (module === require.main) {
+    const PORT = parseInt(process.env.PORT) || 3000;
+    server.listen(PORT, () => {
+      console.log(`App listening on port ${PORT}`);
+      console.log('Press Ctrl+C to quit.');
+    });
+  }
+  // [END appengine_websockets_app]
+  
+  module.exports = server;

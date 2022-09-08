@@ -1,8 +1,8 @@
-import { initializeApp } from "./node_modules/firebase/app";
-import { getAuth, GoogleAuthProvider, reload, signInWithPopup } from './node_modules/firebase/auth'
-import { getFirestore, doc, getDoc, setDoc, addDoc, collection, documentId } from "./node_modules/firebase/firestore";
+import { initializeApp } from "firebase/app";
+import { getAuth, GoogleAuthProvider, reload, signInWithPopup } from 'firebase/auth'
+import { getFirestore, doc, getDoc, setDoc, addDoc, collection, documentId } from "firebase/firestore";
 
-import { io } from "./node_modules/socket.io-client"
+import { io } from "socket.io-client"
 import * as wasm from "./bd-pack/byte_dungeon"
 
 const socket = io('https://western-rider-361904.wm.r.appspot.com');

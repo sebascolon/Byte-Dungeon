@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, reload, signInWithPopup } from 'firebase/auth'
-import { getFirestore, doc, getDoc, setDoc, addDoc, collection, documentId } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider, reload, signInWithPopup } from './node_modules/firebase/auth'
+import { getFirestore, doc, getDoc, setDoc, addDoc, collection, documentId } from "./node_modules/firebase/firestore";
 
 import { io } from "socket.io-client"
 import * as wasm from "./bd-pack/byte_dungeon"

@@ -1,0 +1,16 @@
+{
+  "name": "byte-dungeon",
+  "collaborators": [
+    "sebascolon <scolon1@uw.edu>"
+  ],
+  "version": "0.1.0",
+  "files": [
+    "byte_dungeon_bg.wasm",
+    "byte_dungeon.js",
+    "byte_dungeon_bg.js",
+    "byte_dungeon.d.ts"
+  ],
+  "module": "byte_dungeon.js",
+  "types": "byte_dungeon.d.ts",
+  "sideEffects": false
+}

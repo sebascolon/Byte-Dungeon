@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp } from "./node_modules/firebase/app";
 import { getAuth, GoogleAuthProvider, reload, signInWithPopup } from './node_modules/firebase/auth'
 import { getFirestore, doc, getDoc, setDoc, addDoc, collection, documentId } from "./node_modules/firebase/firestore";
 

@@ -1,18 +1,98 @@
-import { initializeApp } from "./node_modules/firebase/app";
-import { getAuth, GoogleAuthProvider, reload, signInWithPopup } from './node_modules/firebase/auth'
-import { getFirestore, doc, getDoc, setDoc, addDoc, collection, documentId } from "./node_modules/firebase/firestore";
+/*/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+ *      
+ *      JavaScript Wrapper/UI for Byte Dungeon, handles user interactions and utilizes WASM module functions
+ *          - By Sebastian C - August 26, 2022
+ * 
+ *      Implementation and Assumptions
+ *          - Byte Dungeon will be built as a single page application with WASM modules, WebGL graphics, a Firestore database.
+ *          - The frontend will utilize vanilla JS, using no JavaScript frameworks.
+ *          - Graphical representations of grids and tokens will be drawn using WebGL (using PIXI.js graphics library).
+ *          - Board data is generated, changed, and (de)serialized within the WASM module.
+ *          - User authentication will be handled using Firebase authentication.
+ *          - Socket.io will be used for WebSocket functionality in hosting game sessions.
+ *          - Index.js will handle input events and change the contents of index.html accordingly.
+ * 
+ */////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-import { io } from "./node_modules/socket.io-client"
+import { initializeApp } from "firebase/app";
+import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
+import { getFirestore, doc, getDoc, setDoc, addDoc, collection, documentId } from "firebase/firestore";
+
+import { io } from "socket.io-client"
 import * as wasm from "./bd-pack/byte_dungeon"
 
+////////////////////////////////////////////////    VARIABLES   ////////////////////////////////////////////////////////////////
+
+var current_user;                                       // Firebase auth UID for current signed-in user
+var in_game_name;                                       // Display name
+var current_session;                                    // Room id of the current session
+var access_req_list = new Array();                      // Array of incoming token access requests
+var ordered_requests = new Array();                     // Array of incoming requests sorted by initiative
+var current_game;                                       // Document ID for the current game being played
+
+var set_assignments = new Map();                        // Char -> float (action points) map of tokens the user has access to
+var requests = new Map();                               // Char -> request map of outgoing requests
+var token_to_user = new Map();                          // Char -> string map of socket id's for each player
+
+var game_backup;                                        // Deserialized game data, serves as backup and for quick lookups
+var user_sets = null;                                   // Names and id's of each game set the user owns in the database
+var current_abil_key;                                   // Key of the ability the user has selected
+
+var priorButton;                                        // Saves the previous state of a button element (mostly the roll button)
+var token_data;                                         // Data associated with the token the user has selected
+var action_type;                                        // Type of action the user wants to perform (move, use ability/item)
+
+var current_token;                                      // Char representation of the character the user has selected
+var tokens = new Map();                                 // Copies of Token struct data for each token on the board
+var temp_toks = new Map();                              // Temporary tokens for selecting a tile on the board
+var options = new Map();                                // Data and functions for temporary button options
+
+let button1 = document.getElementById("button1");       // Saving these button elements to a variable due to frequent changes
+let button2 = document.getElementById("button2");  
+let button3 = document.getElementById("button3");
+let button4 = document.getElementById("button4");
+
 const socket = io('https://western-rider-361904.wm.r.appspot.com');
-socket.on("connect", () => {
-    logMessage(`Connected to socket with id: ${socket.id} `);
-})
-// Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: "AIzaSyAGcx717SK13eLYcMiL-Dxv38S7RvG52iY",
+var square_size = window.innerWidth/24;
+var token_chars =                                       // List of all char representation of tokens
+    ['🧑','👩','👹','👺','👿','👻','💀','🧙','🧚','🧛','🧝','🧞','🧟','👤','🌬','🐾','🐺','🐎','🦇','🐉',
+    '🕷','🗡','⚔','🛡','🏹','👊','🔱','👑','⚒','🎶','📿','⚠','🚫','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚪'];
+const tutorial =                                        // JSON Stringyfied tutorial game data
+    `{"characters":{"🐉":{"row":2,"column":18,"initiative":2,"sheet":{"name":"Dragon Boss","speed":2,` + 
+    `"initiative":2,"hitpoints":14,"max_hp":14,"stats":{"Intelligence":-1,"Wisdom":0,"Strength":4,"Constitution":3,` +
+    `"Dexterity":-3,"Charisma":-4},"traits":[],"items":[],"equipment":{},"abilities":["Slash"],"effects":{}}},` + 
+    `"🧝":{"row":0,"column":0,"initiative":4,"sheet":{"name":"Warrior","speed":5,"initiative":4,"hitpoints":20,"max_hp":20, ` +
+    `"stats":{"Wisdom":-2,"Strength":3,"Intelligence":0,"Constitution":1,"Charisma":-1,"Dexterity":5},"traits":[],` +
+    `"items":[{"name":"Short sword","uses":-1,"weight":2,"slots":["main_hand"],"effects":[],"abilities":["Slash"]}],` +
+    `"equipment":{},"abilities":[],"effects":{}}},"💀":{"row":6,"column":2,"initiative":0,"sheet":{"name":"Skeleton",` +
+    `"speed":4,"initiative":0,"hitpoints":10,"max_hp":10,"stats":{"Constitution":-2,"Strength":2,"Charisma":0,"Wisdom":-4,` +
+    `"Intelligence":-2,"Dexterity":5},"traits":[],"items":[{"name":"Short sword","uses":-1,"weight":2,"slots":["main_hand"],` +
+    `"effects":[],"abilities":["Slash"]}],"equipment":{},"abilities":[],"effects":{}}}},"sheets":{},` +
+    `"abilities":{"Slash":{"name":"Slash","range":1,"action_points":2,"casting_roll":[1,20],"stat_modifier":null,` +
+    `"requirements":[],"target_effects":["Slash damage"],"caster_effects":[]}},"effects":{"Slash":{"name":"Slash",` +
+    `"duration":0,"target_stat":"health","modifier":[-10,-1],"temporary":false},"Slash damage":{"name":"Slash damage",` +
+    `"duration":0,"target_stat":"health","modifier":[-10,-1],"temporary":false}},"items":{"Short sword":{"name":"Short sword",`+ 
+    `"uses":-1,"weight":2,"slots":["main_hand"],"effects":[],"abilities":["Slash"]}},"grid":[["🧝","0","0","1","0","0","0","1",`+
+    `"0","0","0","0","0","0","0","0","0","0","0","0","0","1","0","0","0","0","0","0","0","0"],["0","0","0","1","0","0","0","1",`+
+    `"0","1","1","1","1","1","1","1","0","0","0","0","0","1","0","0","0","0","0","0","0","0"],["0","0","0","0","0","0","0","1",`+
+    `"0","0","0","0","0","0","0","1","0","0","🐉","0","0","0","0","0","0","0","0","0","0","0"],["1","1","1","1","1","1","0",`+ 
+    `"1","1","1","1","1","1","1","0","1","0","0","0","0","0","1","1","1","1","0","0","1","1","1"],["0","0","0","0","0","0","0",`+
+    `"1","0","0","0","0","0","0","0","1","0","0","0","0","0","1","0","0","0","0","0","0","0","0"],["0","0","0","0","0","0","0",`+
+    `"1","0","1","1","1","1","1","1","1","1","1","0","1","1","1","0","0","1","1","1","1","1","0"],["0","0","💀","0","0","0",`+ 
+    `"0","1","0","0","0","0","0","0","0","1","0","1","0","1","0","0","0","0","1","0","0","0","0","0"],["1","1","0","1","1","1",`+
+    `"1","1","1","1","1","0","1","1","1","1","0","1","0","1","0","0","0","0","1","0","0","0","0","0"],["0","0","0","1","0","0",`+
+    `"0","0","0","0","0","0","1","0","0","1","0","1","0","1","1","0","1","1","1","1","1","1","1","1"],["0","0","0","1","0","0",`+
+    `"0","0","0","0","0","0","1","0","0","1","0","1","0","1","0","0","0","0","0","0","0","0","0","0"],["0","0","0","1","0","0",`+
+    `"0","0","0","0","0","0","1","0","0","0","0","1","0","1","1","1","1","1","1","1","1","1","1","0"],["0","0","0","1","0","0",`+
+    `"0","0","0","0","0","0","1","0","0","0","1","1","0","1","0","0","0","0","0","0","0","0","0","0"],["0","0","0","0","0","0",`+
+    `"0","0","0","0","0","0","1","0","1","1","1","0","0","1","0","0","0","1","1","1","1","1","1","0"],["0","0","0","1","0","0",`+
+    `"0","0","0","0","0","0","1","0","1","0","0","0","1","1","0","0","0","1","0","0","0","0","0","0"],["0","0","0","1","0","0",`+
+    `"0","0","0","0","0","0","1","0","0","0","1","1","1","0","0","0","0","1","0","0","0","0","0","0"]],"requests":[]}`;
+
+////////////////////////////////////////////////    INITIALIZATION   ///////////////////////////////////////////////////////////
+
+const firebaseConfig = {                                            // Firebase configuration
+  apiKey: "AIzaSyAGcx717SK13eLYcMiL-Dxv38S7RvG52iY",                // For Firebase JS SDK v7.20.0+ measurementId is optional
   authDomain: "byte-dungeon-c31b5.firebaseapp.com",
   projectId: "byte-dungeon-c31b5",
   storageBucket: "byte-dungeon-c31b5.appspot.com",
@@ -21,20 +101,12 @@ const firebaseConfig = {
   measurementId: "G-26W1GG8662"
 };
 
-// Initialize Firebase, Auth, and Firestore
-const fb_app = initializeApp(firebaseConfig);
+const fb_app = initializeApp(firebaseConfig);                       // Initialize Firebase, Auth, and Firestore                  
 const db = getFirestore(fb_app);
-
 let auth = getAuth();
 let googleProv = new GoogleAuthProvider();
 
-// Allocate characters to an id
-// each character has a map, onclick use has(uid)?
-
-// while dm, roll button should be to end turn for all
-
-// Initialize PIXI graphics
-const Application = PIXI.Application;
+const Application = PIXI.Application;                               // Initialize PIXI graphics, colors, and styles
 const application = new Application({
     view: document.getElementById("grid"),
     width: window.innerWidth *.75,
@@ -42,8 +114,9 @@ const application = new Application({
     transparent: false,
     antialias: true
 });
+
+// Initializing content of canvas with gridlines and welcome title text
 application.renderer.backgroundColor = 0x1f1e1c;
-// rgb(240, 233, 213)
 const hd_moji = new PIXI.TextStyle({ fontSize: 92, fill: "white" });
 const style = new PIXI.TextStyle({
     fontFamily: 'Arial',
@@ -60,55 +133,20 @@ const style = new PIXI.TextStyle({
     lineJoin: 'round',
     strokeThickness: 6,
 });
-
 const basicText = new PIXI.Text('Welcome to Byte Dungeon', style);
-var square_size = window.innerWidth/24;
-draw_lines(window.innerWidth * 0.75/square_size, window.innerHeight * 0.84/square_size, "")
+drawClickableGrid(window.innerWidth * 0.75/square_size, window.innerHeight * 0.84/square_size, "")
 basicText.x = 20;
 basicText.y = 20;
 application.stage.addChild(basicText);
 
-
+// Initializing content of log div, inserting messages
 document.getElementById("roll-button").onclick = initialSignIn;
 logMessage('Icons made by <a href="https://www.freepik.com" title="Freepik"> Freepik </a> from ' + 
     '<a href="https://www.flaticon.com/" title="Flaticon">www.flaticon.com</a>');
 logMessage("Welcome to Byte Dungeon v1");
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-var current_user;
-var in_game_name; 
-var current_session;
-var access_req_list = new Array();
-var ordered_requests = new Array();
-var current_game;
-
-var set_assignments = new Map();
-var requests = new Map();
-var token_to_user = new Map();
-
-var game_backup;
-var user_sets = null;
-var current_abil_key;
-
-var priorButton;
-var token_data;
-var action_type;
-
-var current_token;
-var tokens = new Map();
-var temp_toks = new Map();
-var options = new Map();
-
-let button1 = document.getElementById("button1");
-let button2 = document.getElementById("button2");
-let button3 = document.getElementById("button3");
-let button4 = document.getElementById("button4");
-
-var token_chars = ['🧑','👩','👹','👺','👿','👻','💀','🧙','🧚','🧛','🧝','🧞','🧟','👤','🌬','🐾','🐺','🐎','🦇','🐉','🕷',
-    '🗡','⚔','🛡','🏹','👊','🔱','👑','⚒','🎶','📿','⚠','🚫','🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚪'];
-socket.on("socketLog", (msg) => { logMessage(msg) });
-var coll = document.getElementsByClassName("collapsible");
+// Collapsible buttons template courtesy of W3 Schools
+var coll = document.getElementsByClassName("collapsible");  
 var i;
 for (i = 0; i < coll.length; i++) {
   coll[i].addEventListener("click", function() {
@@ -121,352 +159,133 @@ for (i = 0; i < coll.length; i++) {
   });
 }
 
-function clickToken() {
-    clearTempTokens();
-    options.clear();
-    console.log(tokens.get(this)[0], tokens.get(this)[1]);
-    let tok = wasm.get_char(tokens.get(this)[0], tokens.get(this)[1]); // needs try catch
-    console.log(tok);
-    if (tok == '0' || tok == '1') { alert("Couldn't get the char value for this clickable! Please try again"); return }
-    console.log(set_assignments);
-    if (!set_assignments.has(tok)) { blockCard(tok); return }   // rather than has, change this to char -> double (action points)
-    if (set_assignments.get(tok) < 1) { blockCard(tok); return } // Make a different card
-    token_data = wasm.get_character(tok);
-    current_token = tok;
-    console.log(token_data);
+document.chat.onsubmit = function(e) {
+    e = e || window.event;
+    e.preventDefault();
+    socket.emit("broadcastLog", current_session, `${in_game_name} says: ${document.forms["chat"]["msg"].value}`);
+    document.forms["chat"]["msg"].value = '';
+    e.returnValue = false;
+};
+
+////////////////////////////////////////////////    ON-LOGIN FUNCTIONS    //////////////////////////////////////////////////////
+
+/******************************************************************************
+ * initialSignIn - onClick event for login button, Google auth using popup
+ *****************************************************************************/
+function initialSignIn() {
+    signInWithPopup(auth, googleProv)
+        .then((response) => {
+        document.getElementById("user_id").innerHTML = 'User: ' + response.user.displayName;
+        logMessage('Welcome ' + response.user.displayName);
+        current_user = response.user.uid;
+        in_game_name = response.user.displayName;
+        getData();
+        uponSigningIn();
+    })
+}
+
+/******************************************************************************
+ * uponSigningIn - signInWithPopup success enables main menu buttons
+ *****************************************************************************/
+function uponSigningIn() {
+    document.getElementById("roll-button").onclick = signOut;
+    document.getElementById("roll-button-label").innerHTML = 'Sign Out';
     button1.disabled = false;
-    button1.onclick = getMoves;
-    loadItems();
-    loadAbles();
-    loadEquip();
-    // get tokens' items
-    // add to list of content under button 3
-    // enable button 3
-    // set each interior button to getItems
-    renderCard();
+    button2.disabled = false;
+    button1.onclick = initCreation;
+    button2.onclick = joinGame;
 }
 
-function blockCard(key) {
-    document.getElementById("content2").innerHTML = '';
-    document.getElementById("content3").innerHTML = '';
-    document.getElementById("content4").innerHTML = '';
-
-    button1.disabled = true;
-    button2.disabled = true;
-    button3.disabled = true;
-    button4.disabled = true;
-
-    document.getElementById("card").innerHTML = '<h1 class="card-alt">Content Obscured</h1>' + 
-        '<button id="access-button" class="collapsible">Request access to this character </button>';
-    document.getElementById("access-button").onclick = accessRequest;
-    options.set("access-button", key);
+/******************************************************************************
+ * signOut - signOut button's onclick, clears vars gathered by getData, reloads
+ *****************************************************************************/
+function signOut() {
+    user_sets = null;
+    current_user = null;
+    current_session = null;
+    window.location.reload();
 }
 
-function accessRequest() {
-    console.log("HERE");
-    console.log(current_session, current_user, in_game_name, options.get("access-button"));
-    socket.emit("requestAccess", current_session, current_user, in_game_name, options.get("access-button"));
+/******************************************************************************
+ * conciseTimestamp - Date() shortened to 24 hr: HH:MM:SS + local timezone 
+ *****************************************************************************/
+function conciseTimestamp() {
+    let res = new Date().toString();
+    return res.substring(16, 31);
 }
 
-socket.on("loadAccessRequests", (list) => {
-    console.log(list);
-    access_req_list = list;
-    listRequests();
-})
-
-function listRequests() {
-    document.getElementById("card").innerHTML = '<h1 class="card-head">Requests</h1>';
-    for(var i = 0; i < access_req_list.length; i++) {
-        document.getElementById("card").innerHTML = document.getElementById("card").innerHTML + 
-        '<div style="border-bottom: 2.5px solid rgb(100, 100, 100)" id="access-div' + i +  '">' +
-        '<p class="card-alt">' + access_req_list[i].display_name + ' is requesting access to ' + access_req_list[i].token + '</p>' +
-        '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="access-approve' + i + '"> Approve' + '</button>' + 
-        '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="access-decline' + i + '"> Decline' + '</button>' + 
-        '</div>';
-        options.set('access-approve' + i, i);
-        options.set('access-decline' + i, i);
-    }
-    for(var i = 0; i < access_req_list.length; i++) {
-        document.getElementById("access-approve" + i.toString()).onclick = grantAccess;
-        document.getElementById("access-decline" + i.toString()).onclick = removeAccess;
-    }
-
-    console.log(ordered_requests);
-    for(var i = 0; i < ordered_requests.length; i++) {
-        let str = '';
-        switch(ordered_requests[i].action_type) {
-            case 0: str = `${ordered_requests[i].caster} moves to (${ordered_requests[i].target_cell[0]}, ${ordered_requests[i].target_cell[1]})`; break;
-            case 1: str = `${ordered_requests[i].caster} uses ${game_backup.characters[ordered_requests[i].caster].sheet.items[ordered_requests[i].subtype_key].name}`; break;
-            case 2: str = `${ordered_requests[i].caster} uses ${game_backup.abilities[ordered_requests[i].subtype_key].name}`; break;
-            case 3: str =`${ordered_requests[i].caster} unequips item from ${ordered_requests[i].subtype_key}`; break;
-            default:str = 'Error occured when loading request'; break;
-          }
-        document.getElementById("card").innerHTML = document.getElementById("card").innerHTML + 
-        '<div style="border-bottom: 2.5px solid rgb(100, 100, 100)" id="req-div' + i +  '">' +
-        '<p class="card-alt">' + str + '</p>' +
-        '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="req-approve' + i + '"> Approve' + '</button>' + 
-        '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="req-decline' + i + '"> Decline' + '</button>' + 
-        '</div>';
-        options.set('req-approve' + i, {index: i, request: ordered_requests[i], user: token_to_user.get(ordered_requests[i].caster), msg: str});
-        options.set('req-decline' + i, i);
-    }
-    for(var i = 0; i < ordered_requests.length; i++) {
-        if (ordered_requests[i].action_type == 2) { document.getElementById("req-approve" + i.toString()).onclick = deferToRoll; }
-        else { document.getElementById("req-approve" + i.toString()).onclick = approveRequest; }
-        document.getElementById("req-decline" + i.toString()).onclick = declineRequest;
-    }
+/******************************************************************************
+ * logMessage - Adds concise timestamp + msg string to message log
+ *****************************************************************************/
+function logMessage(msg) {
+    document.getElementById("console").innerHTML = '<p class="log"> [' +
+        conciseTimestamp() + '] ' + msg + '</p>' + document.getElementById("console").innerHTML;
 }
 
-function deferToRoll() {
-    for(var i = 0; i < access_req_list.length; i++) {
-        document.getElementById("access-approve" + i.toString()).disabled = true;
-        document.getElementById("access-decline" + i.toString()).disabled = true;
-    }
-    for(var i = 0; i < ordered_requests.length; i++) {
-        document.getElementById("req-approve" + i.toString()).disabled = true;
-        document.getElementById("req-decline" + i.toString()).disabled = true;
-    }
-    options.set("req-decline" + options.get(this.id).index.toString(), options.get(this.id));
-    document.getElementById("req-decline" + options.get(this.id).index).disabled = false;
-    document.getElementById("req-decline" + options.get(this.id).index).onclick = cancelRoll;
-    socket.emit("emitRollRequest", current_session, options.get(this.id));
-}
+/******************************************************************************
+ * getData - Retrieves user's gamee sets from db, lists under host and edit
+ *****************************************************************************/
+const getData = () => {
+    const docRef = doc(db, 'user_to_set', current_user);
+    getDoc(docRef).then((response) => {
+        if (response.exists()) {
+            user_sets = new Map(Object.entries(response.data().sets));
+            if (user_sets != null) {
+                document.getElementById("content3").innerHTML = ''
+                document.getElementById("content4").innerHTML = '';
+                options.clear();
+                button3.disabled = false;
+                button4.disabled = false;
+                var counter = 0;
+                for (const [key, value] of user_sets) {
+                    document.getElementById("content3").innerHTML = document.getElementById("content3").innerHTML 
+                        + '<button id="set-button' + counter + '" class="mini-collapsible">' + key + '</button>';
+                    document.getElementById("content4").innerHTML = document.getElementById("content4").innerHTML 
+                        + '<button id="game-button' + counter + '" class="mini-collapsible">' + key + '</button>';
+                    options.set('set-button' + counter, value);
+                    options.set('game-button' + counter, value);
+                    counter++;
+                }
+                while(counter != 0) {
+                    counter--;
+                    document.getElementById("set-button" + (counter).toString()).onclick = startEditing;
+                    document.getElementById("game-button" + (counter).toString()).onclick = startGame;
+                }
+                logMessage('Loaded ' + user_sets.size + ' games');
+            }
+        }
+        else { generateTutorial(); }
+    })
+};
 
-// calculate the modifier when the request is being generated
-// applied {amount}
-
-socket.on("backupGame", () => {
-    game_backup = wasm.export_game();
-    console.log("backing up");
-});
-
-function cancelRoll() {
-    socket.emit("removeRollRequest", current_session, options.get(this.id));
-    let index = options.get(this.id).index;
-    options.set(this.id, index);
-}
-
-socket.on("removeRoll", () => {
-    document.getElementById('roll-button').outerHTML = priorButton.oHTML;
-    document.getElementById('roll-button').innerHTML = priorButton.iHTML;
-    document.getElementById('roll-button').disabled = priorButton.dis;
-    document.getElementById('roll-button').onclick = priorButton.click;
-})
-
-socket.on("enableRoll", (request_data) => {
-    priorButton = { oHTML: document.getElementById('roll-button').outerHTML, iHTML: document.getElementById('roll-button').innerHTML,
-        dis: document.getElementById('roll-button').disabled, click: document.getElementById('roll-button').onclick };
-    document.getElementById('roll-button').disabled = false;
-    document.getElementById('roll-button-label').innerHTML = 'Roll to attempt ' + game_backup.abilities[request_data.request.subtype_key].name;
-    document.getElementById('roll-button').onclick = roll20;
-    options.set('roll-button', request_data);
-})
-
-function roll20() {
-    document.getElementById('roll-button').disabled = true;
-    document.getElementById('roll-button-label').innerHTML = '';
-    document.getElementById('roll-button').onclick = '';
-    let roll = Math.floor(Math.random() * 20) + 1;
-    let name = options.get(this.id).request.caster;
-    socket.emit("roll20", current_session, roll, name, options.get(this.id).index);
-    options.delete('roll-button');
-}
-
-socket.on("confirmSuccess", (index) => {
-    document.getElementById("req-approve" + index.toString()).onclick = approveRequest;
-    document.getElementById("req-approve" + index.toString()).disabled = false;
-    document.getElementById("req-approve" + index.toString()).click();
-})
-
-socket.on("confirmFailure", (index) => {
-    document.getElementById("req-decline" + index.toString()).click();
-    document.getElementById("req-decline" + index.toString()).onclick = declineRequest;
-    document.getElementById("req-decline" + index.toString()).click();
-})
-
-function approveRequest() {
-    let data = options.get(this.id);
-    // if request actiontype = 1? ability then do sumn else
-    ordered_requests.splice(data.index, 1);
-    socket.emit("approveRequest", current_session, data.request, data.user, data.msg);
-    document.getElementById("req-div" + data.index.toString()).remove();
-    listRequests();
-}
-
-function declineRequest() {
-    ordered_requests.splice(options.get(this.id), 1);
-    document.getElementById("req-div" + options.get(this.id)).remove();
-    listRequests();
-}
-
-function grantAccess() {
-    socket.emit("grantAccess", current_session, options.get(this.id));
-    console.log("granting access");
-    console.log(access_req_list[options.get(this.id)]);
-    document.getElementById("access-div" + options.get(this.id).toString()).remove();
-    getAccessRequests()
-}
-
-socket.on("addTokenAccess", (token) => {
-    if (token === null) 
-        { set_assignments = new Map(); blockCard(); return; }
-    document.getElementById("role_id").innerHTML = 'Role: ' + game_backup.characters[token].sheet.name;
-    set_assignments.set(token, 3.0);
-    console.log(token);
-})
-
-function removeAccess() {
-    socket.emit("removeAccess", current_session, options.get(this.id));
-    console.log("removing access");
-    document.getElementById("access-div" + options.get(this.id).toString()).remove();
-    getAccessRequests();
-}
-
-function loadAbles() {
-    button2.disabled = true;
-    document.getElementById("content2").innerHTML = '';
-    for (var i = 0; i < token_data.sheet.abilities.length; i++) {
-        button2.disabled = false;
-        document.getElementById("content2").innerHTML = document.getElementById("content2").innerHTML 
-            + '<button id="abil-button' + i + '" class="mini-collapsible">' 
-            + game_backup.abilities[token_data.sheet.abilities[i]].name + '</button>';
-        options.set('abil-button' + i, token_data.sheet.abilities[i]);
-    }
-    for (var i = 0; i < token_data.sheet.abilities.length; i++) {
-        document.getElementById("abil-button" + (i).toString()).onclick = getAbles;
-    }
-}
-
-function loadItems() {
-    button3.disabled = true;
-    document.getElementById("content3").innerHTML = '';
-    for (var i = 0; i < token_data.sheet.items.length; i++) {
-        button3.disabled = false;
-        document.getElementById("content3").innerHTML = document.getElementById("content3").innerHTML 
-            + '<button id="item-button' + i + '" class="mini-collapsible">' + token_data.sheet.items[i].name + '</button>';
-        options.set('item-button' + i, i);
-    }
-    for (var i = 0; i < token_data.sheet.items.length; i++) {
-        document.getElementById("item-button" + (i).toString()).onclick = getItems;
-    }
-}
-
-function loadEquip() {
-    button4.disabled = true;
-    document.getElementById("content4").innerHTML = '';
-    var equips = new Map(Object.entries(token_data.sheet.equipment))
-    var counter = 0;
-    for (const [key, value] of equips) {
-        button4.disabled = false;
-        document.getElementById("content4").innerHTML = document.getElementById("content4").innerHTML 
-            + '<button id="game-button' + counter + '" class="mini-collapsible">' + value.name + '</button>';
-        options.set('game-button' + counter, key);
-        counter++;
-    }
-    while(counter != 0) {
-        counter--;
-        document.getElementById("game-button" + (counter).toString()).onclick = getEquip;
-    }
-}
-
-function renderCard() {
-    document.getElementById("card").innerHTML = '<h1 class="card-head" style="font-style: italic">' + token_data.sheet.name + '</h1>' +
-        '<h2 class="card-alt"> HP: ' + token_data.sheet.hitpoints + ' / ' + token_data.sheet.max_hp + '</h2>' + 
-        '<h2 class="card-head"> Speed: ' + token_data.sheet.speed + '</h2>' + 
-        '<h2 class="card-alt"> Initiative: ' + token_data.sheet.initiative + '</h2>';
-    let stats = new Map(Object.entries(token_data.sheet.stats));
-    let style = 'class="card-alt"';
-    for (let [key, value] of stats) {
-        if (style == 'class="card-alt"') {style = 'class="card-head"'; }
-        else { style = 'class="card-alt"'; }
-        document.getElementById("card").innerHTML = document.getElementById("card").innerHTML +
-            `<h2 ${style}> ${key}: ${value} </h2>`;
-    }
-}
-
-function clickOption() { 
-    // make function for each type of request
-    // wasm.gen_request(token, ) -> returns (ap cost, request)
-    let new_row = temp_toks.get(this)[0];
-    let new_col = temp_toks.get(this)[1];
-
-    console.log(action_type, "", wasm.get_char(token_data.row, token_data.column), 
-    temp_toks.get(this)[0], temp_toks.get(this)[1]);
-
-    let ap_cost = (wasm.get_cell_distance(token_data.row, token_data.column, new_row, new_col) / token_data.sheet.speed) * 3.0;
-
-    let req = wasm.generate_request(action_type, "", current_token, new_row, new_col);
-    if (!requests.has(current_token)) {
-        requests.set(current_token, new Array());
+/******************************************************************************
+ * initCreation - Create-game-button's onclick, adds game to set list in db
+ *****************************************************************************/
+function initCreation() {
+    var set_name = prompt("Enter a name for the new game");
+    if (set_name === null) { return; }
+    if (user_sets != null) { 
+        if (user_sets.has(set_name)) {
+            alert(set_name + ' already taken!'); 
+            return;
+        }
     }
 
-    console.log(requests);
-    console.log(requests.get(current_token));
-    let new_arr = requests.get(current_token);
-    new_arr.push(req);
-    requests.set(current_token, new_arr);
-
-    set_assignments.set(wasm.get_char(new_row, new_col), set_assignments.get(wasm.get_char(new_row, new_col))-ap_cost);
-    console.log(set_assignments.get(wasm.get_char(new_row, new_col)));
-    if (set_assignments.get(wasm.get_char(new_row, new_col)) < 1) {
-        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
-        requests.delete(current_token);
-        blockCard();
-    }
-    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
-    clearTempTokens();
-    token_data = wasm.find_character(new_row, new_col);
-    current_token = wasm.get_char(new_row, new_col);
-    console.log(token_data);
-    let dim = wasm.get_dimensions();
-    draw_lines(dim[1], dim[0], wasm.board_to_string());
-    logMessage("move " + token_data.sheet.name + " to point " + new_row + ", " +  new_col);
-    loadItems();
-    loadAbles();
-    loadEquip();
+    wasm.reset_session();
+    let baked_game = JSON.stringify(wasm.export_game());
+    addDoc(collection(db, 'game_sets'), { "data": baked_game }).then((response)=> {
+        setDoc(doc(db, 'user_to_set', current_user), { sets: { [`${set_name}`]: response.id } }, { merge: true })
+            .then(() => {
+                logMessage('Added new game: ' + `${set_name}`);
+                getData();
+            });
+    })
 }
 
-function clearTempTokens() {
-    for (const key of temp_toks.keys()) {
-        application.stage.removeChild(key);
-    }
-    temp_toks.clear();
-}
-
-function create_clickable(char, x, y, row, col, func, map)
-{
-    var label = new PIXI.Text(char, hd_moji);
-    label.updateText();
-    var label = new PIXI.Sprite(label.texture);
-    label.anchor.set(0.5);
-    label.width = square_size;
-    label.height = square_size * .8;
-    label.x = x;
-    label.y = y;
-    label.interactive = true;
-    label.buttonMode = true;
-    label.on('pointerdown', func);
-    map.set(label, [Math.round(row), Math.round(col)]);
-    application.stage.addChild(label);
-}
-
-function highlight_cells(cells, func)
-{
-    clearTempTokens();
-    for (let cell = 0; cell < cells.length; cell++) {
-        create_clickable(
-            "🚩", 
-            cells[cell][1] * square_size + square_size/2,
-            cells[cell][0] * square_size + square_size/2,
-            cells[cell][0], 
-            cells[cell][1],
-            func,
-            temp_toks
-        );
-    }
-}
-
-function draw_editable_grid(rows, columns, tile_map)
+/******************************************************************************
+ * drawClickableGrid - Draws grid with clickable tokens using tilemap as string
+ *****************************************************************************/
+function drawClickableGrid(rows, columns, tile_map)
 {
     application.stage.removeChildren();
     application.renderer.resize((square_size*rows), (square_size*columns));
@@ -474,56 +293,38 @@ function draw_editable_grid(rows, columns, tile_map)
     let end_of_tiles = false;
     for (let j = 0; j < (square_size*columns); j+= square_size)
         for (let i = 0; i < (square_size*rows); i+=square_size) {
-            let char = '0';
-            if (!end_of_tiles) 
-                { char = tile_map[tile]; }
-            createTogglable(char, i + square_size/2, j + square_size/2, j/square_size, i/square_size);
+            const box = new PIXI.Graphics()
+            .lineStyle(1, 0xBBBBBB, 1);
+            if (tile_map[tile] == '1') {
+                box.beginFill(0xAAAAAA);
+            }
+            box.drawRect(i, j, square_size, square_size);
+            var sprite = new PIXI.Sprite(application.renderer.generateTexture(box));
+            sprite.anchor.set(0.5);
+            sprite.x = i + square_size/2;
+            sprite.y = j + square_size/2;
+            application.stage.addChild(sprite);
+
             if (tile >= tile_map.length) { end_of_tiles = true; } 
+            if (tile_map[tile] != '0' && tile_map[tile] != '1' && !end_of_tiles) {
+                createClickable(
+                    tile_map[tile], 
+                    i + square_size/2,
+                    j + square_size/2,
+                    (j/square_size), 
+                    (i/square_size),
+                    clickToken,
+                    tokens
+                );
+            }
             tile++;
         }
 }
 
-function createTogglable(char, x, y, row, col) {
-    if (char == '0') {
-        const box = new PIXI.Graphics()
-        .lineStyle(1, 0xBBBBBB, 1);
-        box.drawRect(x, y, square_size, square_size);
-        var sprite = new PIXI.Sprite(application.renderer.generateTexture(box));
-    }
-    else if (char == '1') {
-        const box = new PIXI.Graphics()
-        .lineStyle(1, 0xBBBBBB, 1);
-        box.beginFill(0xAAAAAA);
-        box.drawRect(x, y, square_size, square_size);
-        sprite = new PIXI.Sprite(application.renderer.generateTexture(box));
-    } 
-    else {
-        var label = new PIXI.Text(char, hd_moji);
-        label.updateText();
-        sprite = new PIXI.Sprite(label.texture);
-        sprite.width = square_size;
-        sprite.height = square_size * .8;
-    }
-    
-    sprite.anchor.set(0.5);
-    sprite.x = x;
-    sprite.y = y;
-    
-    sprite.interactive = true;
-    sprite.buttonMode = true;
-    sprite.on('pointerdown', toggleTile);
-    temp_toks.set(sprite, {x_coord: x, y_coord: y, grid_row: Math.round(row), grid_col: Math.round(col)});
-    application.stage.addChild(sprite);
-}
-
-function toggleTile() {
-    let tok = temp_toks.get(this);
-    createTogglable(wasm.toggle_cell(tok.grid_row, tok.grid_col), tok.x_coord, tok.y_coord, tok.grid_row, tok.grid_col);
-    reloadNewCharacters();
-    application.stage.removeChild(this);
-}
-
-function draw_grid(rows, columns, tile_map)
+/******************************************************************************
+ * drawStaticGrid - Draws grid without clickable tokens using tilemap as string
+ *****************************************************************************/
+function drawStaticGrid(rows, columns, tile_map)
 {
     application.stage.removeChildren();
     application.renderer.resize((square_size*rows), (square_size*columns));
@@ -559,7 +360,10 @@ function draw_grid(rows, columns, tile_map)
         }
 }
 
-function draw_lines(rows, columns, tile_map)
+/******************************************************************************
+ * drawEditableGrid - Draws grids with togglable tiles, only for editing
+ *****************************************************************************/
+function drawEditableGrid(rows, columns, tile_map)
 {
     application.stage.removeChildren();
     application.renderer.resize((square_size*rows), (square_size*columns));
@@ -567,105 +371,213 @@ function draw_lines(rows, columns, tile_map)
     let end_of_tiles = false;
     for (let j = 0; j < (square_size*columns); j+= square_size)
         for (let i = 0; i < (square_size*rows); i+=square_size) {
-            const box = new PIXI.Graphics()
-            .lineStyle(1, 0xBBBBBB, 1);
-            if (tile_map[tile] == '1') {
-                box.beginFill(0xAAAAAA);
-            }
-            box.drawRect(i, j, square_size, square_size);
-            var sprite = new PIXI.Sprite(application.renderer.generateTexture(box));
-            sprite.anchor.set(0.5);
-            sprite.x = i + square_size/2;
-            sprite.y = j + square_size/2;
-            application.stage.addChild(sprite);
-
+            let char = '0';
+            if (!end_of_tiles) 
+                { char = tile_map[tile]; }
+            createTogglable(char, i + square_size/2, j + square_size/2, j/square_size, i/square_size);
             if (tile >= tile_map.length) { end_of_tiles = true; } 
-            if (tile_map[tile] != '0' && tile_map[tile] != '1' && !end_of_tiles) {
-                create_clickable(
-                    tile_map[tile], 
-                    i + square_size/2,
-                    j + square_size/2,
-                    (j/square_size), 
-                    (i/square_size),
-                    clickToken,
-                    tokens
-                );
-            }
             tile++;
         }
 }
 
-////////////////////////////////////////////////////////////////////////////////////
-
-function conciseTimestamp() {
-    let res = new Date().toString();
-    return res.substring(16, 31);
+/******************************************************************************
+ * createClickable - Creates a PIXI button as a tile with a character or wall
+ *****************************************************************************/
+function createClickable(char, x, y, row, col, func, map)
+{
+    var label = new PIXI.Text(char, hd_moji);
+    label.updateText();
+    var label = new PIXI.Sprite(label.texture);
+    label.anchor.set(0.5);
+    label.width = square_size;
+    label.height = square_size * .8;
+    label.x = x;
+    label.y = y;
+    label.interactive = true;
+    label.buttonMode = true;
+    label.on('pointerdown', func);
+    map.set(label, [Math.round(row), Math.round(col)]);
+    application.stage.addChild(label);
 }
 
-function logMessage(msg) {
-    document.getElementById("console").innerHTML = '<p class="log"> [' +
-        conciseTimestamp() + '] ' + msg + '</p>' + document.getElementById("console").innerHTML;
+/******************************************************************************
+ * highlight_cells - Draws a flag to coordinates in cells array, onclick = func
+ *****************************************************************************/
+function highlight_cells(cells, func)
+{
+    clearTempTokens();
+    for (let cell = 0; cell < cells.length; cell++) {
+        createClickable(
+            "🚩", 
+            cells[cell][1] * square_size + square_size/2,
+            cells[cell][0] * square_size + square_size/2,
+            cells[cell][0], 
+            cells[cell][1],
+            func,
+            temp_toks
+        );
+    }
 }
 
-const getData = () => {
-    const docRef = doc(db, 'user_to_set', current_user);
-    getDoc(docRef).then((response) => {
-        if (response.exists()) {
-            user_sets = new Map(Object.entries(response.data().sets));
-            if (user_sets != null) {
-                document.getElementById("content3").innerHTML = ''
-                document.getElementById("content4").innerHTML = '';
-                options.clear();
-                button3.disabled = false;
-                button4.disabled = false;
-                var counter = 0;
-                console.log(user_sets);
-                for (const [key, value] of user_sets) {
-                    document.getElementById("content3").innerHTML = document.getElementById("content3").innerHTML 
-                        + '<button id="set-button' + counter + '" class="mini-collapsible">' + key + '</button>';
-                    document.getElementById("content4").innerHTML = document.getElementById("content4").innerHTML 
-                        + '<button id="game-button' + counter + '" class="mini-collapsible">' + key + '</button>';
-                    options.set('set-button' + counter, value);
-                    options.set('game-button' + counter, value);
-                    counter++;
-                }
-                while(counter != 0) {
-                    counter--;
-                    document.getElementById("set-button" + (counter).toString()).onclick = startEditing;
-                    document.getElementById("game-button" + (counter).toString()).onclick = startGame;
-                }
-                logMessage('Loaded ' + user_sets.size + ' games');
-            }
-        }
-        else { generateTutorial(); }
-    })
-};
- 
-function saveAndExit() {
-    console.log(wasm.export_game());
-    let baked_game = JSON.stringify(wasm.export_game());
-    console.log(baked_game);
-    let docRef = doc(db, 'game_sets', current_game);
-    setDoc(docRef, { "data": baked_game }, {merge: true})
-            .then(() => {
-                window.location.reload();
-            });
+/******************************************************************************
+ * createTogglable - Creates a PIXI button toggling to an empty or walled tile
+ *****************************************************************************/
+function createTogglable(char, x, y, row, col) {
+    if (char == '0') {
+        const box = new PIXI.Graphics()
+        .lineStyle(1, 0xBBBBBB, 1);
+        box.drawRect(x, y, square_size, square_size);
+        var sprite = new PIXI.Sprite(application.renderer.generateTexture(box));
+    }
+    else if (char == '1') {
+        const box = new PIXI.Graphics()
+        .lineStyle(1, 0xBBBBBB, 1);
+        box.beginFill(0xAAAAAA);
+        box.drawRect(x, y, square_size, square_size);
+        sprite = new PIXI.Sprite(application.renderer.generateTexture(box));
+    } 
+    else {
+        var label = new PIXI.Text(char, hd_moji);
+        label.updateText();
+        sprite = new PIXI.Sprite(label.texture);
+        sprite.width = square_size;
+        sprite.height = square_size * .8;
+    }
+    
+    sprite.anchor.set(0.5);
+    sprite.x = x;
+    sprite.y = y;
+    
+    sprite.interactive = true;
+    sprite.buttonMode = true;
+    sprite.on('pointerdown', toggleTile);
+    temp_toks.set(sprite, {x_coord: x, y_coord: y, grid_row: Math.round(row), grid_col: Math.round(col)});
+    application.stage.addChild(sprite);
 }
 
+/******************************************************************************
+ * toggleTile - Toggles tile to empty or walled state and logs change to WASM
+ *****************************************************************************/
+function toggleTile() {
+    let tok = temp_toks.get(this);
+    createTogglable(wasm.toggle_cell(tok.grid_row, tok.grid_col), tok.x_coord, tok.y_coord, tok.grid_row, tok.grid_col);
+    reloadNewCharacters();
+    application.stage.removeChild(this);
+}
+
+/******************************************************************************
+ * clickToken - Gets token data for the token being clicked if user has access
+ *****************************************************************************/
+function clickToken() {
+    clearTempTokens();
+    options.clear();
+    let tok = wasm.get_char(tokens.get(this)[0], tokens.get(this)[1]);
+    if (tok == '0' || tok == '1') 
+        { alert("Couldn't get the char value for this clickable! Please try again"); return }
+    
+    if (!set_assignments.has(tok)) 
+        { blockCard(tok); return }
+    if (set_assignments.get(tok) < 1) 
+        { blockCard(tok); return } 
+    token_data = wasm.get_character(tok);
+    current_token = tok;
+
+    button1.disabled = false;
+    button1.onclick = getMoves;
+    loadItems();
+    loadAbles();
+    loadEquip();
+    renderCard();
+}
+
+/******************************************************************************
+ * clickDestination - Temp token's onclick, moves token the cell being clicked
+ *****************************************************************************/
+function clickDestination() { 
+    let new_row = temp_toks.get(this)[0];
+    let new_col = temp_toks.get(this)[1];
+
+    let ap_cost = (wasm.get_cell_distance(token_data.row, token_data.column, new_row, new_col) / token_data.sheet.speed) * 3.0;
+
+    let req = wasm.generate_request(action_type, "", current_token, new_row, new_col);
+    if (!requests.has(current_token)) {
+        requests.set(current_token, new Array());
+    }
+
+    let new_arr = requests.get(current_token);
+    new_arr.push(req);
+    requests.set(current_token, new_arr);
+
+    set_assignments.set(wasm.get_char(new_row, new_col), set_assignments.get(wasm.get_char(new_row, new_col))-ap_cost);
+    if (set_assignments.get(wasm.get_char(new_row, new_col)) < 1) {
+        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
+        requests.delete(current_token);
+        blockCard();
+    }
+    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
+    clearTempTokens();
+    token_data = wasm.find_character(new_row, new_col);
+    current_token = wasm.get_char(new_row, new_col);
+    let dim = wasm.get_dimensions();
+    drawClickableGrid(dim[1], dim[0], wasm.board_to_string());
+    logMessage("move " + token_data.sheet.name + " to point " + new_row + ", " +  new_col);
+    loadItems();
+    loadAbles();
+    loadEquip();
+}
+
+/******************************************************************************
+ * clickTarget - Temp token clicked will be the target of the user's ability
+ *****************************************************************************/
+function clickTarget() {
+    let new_row = temp_toks.get(this)[0];
+    let new_col = temp_toks.get(this)[1];
+    let char = wasm.get_char(token_data.row, token_data.column);
+    let req = wasm.generate_request(action_type, current_abil_key, char, new_row, new_col);
+    if (!requests.has(current_token)) { requests.set(current_token, new Array()); }
+    
+    let new_arr = requests.get(current_token);
+    new_arr.push(req);
+    requests.set(current_token, new_arr);
+    set_assignments.set(char, set_assignments.get(current_token)-2);
+    if (set_assignments.get(current_token) < 1) {
+        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
+        requests.delete(current_token);
+        blockCard();
+    }
+
+    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
+    token_data = wasm.find_character(token_data.row, token_data.column);
+    clearTempTokens();
+    loadItems();
+    loadAbles();
+    loadEquip();
+}
+
+/******************************************************************************
+ * clearTempTokens - Removes temp tokens from board
+ *****************************************************************************/
+function clearTempTokens() {
+    for (const key of temp_toks.keys()) {
+        application.stage.removeChild(key);
+    }
+    temp_toks.clear();
+}
+
+
+////////////////////////////////////////////////    EDIT-GAME FUNCTIONS    /////////////////////////////////////////////////////
+
+/******************************************************************************
+ * startEditing - Start editing button's onclick, loads game set from db
+ *****************************************************************************/
 function startEditing() {
-    console.log(options);
-    console.log(this.id);
-    console.log(options.get(this.id));
     current_game = options.get(this.id);
     const docRef = doc(db, 'game_sets', options.get(this.id));
     getDoc(docRef).then((response) => { 
-        //if (!response.exists()) { return;}
-        //console.log(response.data());
-        //console.log(response.data().data);
         game_backup = JSON.parse(response.data().data);
         wasm.load_game(game_backup);
         let dim = wasm.get_dimensions();
-        draw_grid(dim[1], dim[0], wasm.board_to_string());
+        drawStaticGrid(dim[1], dim[0], wasm.board_to_string());
         
         document.getElementById("roll-button").disabled = false;
         document.getElementById("roll-button-label").innerHTML = 'Save and exit';
@@ -701,6 +613,9 @@ function startEditing() {
     });
 }
 
+/******************************************************************************
+ * addEffect - Loads in form for adding an effect to a game
+ *****************************************************************************/
 const addEffect = () => {
     document.getElementById("card").style.height = '70%';
     document.getElementById("card").innerHTML = '<h1 class="card-head">New effect</h1>' + 
@@ -728,11 +643,13 @@ const addEffect = () => {
             );
             document.getElementById("card").style.height = '0%';
             document.getElementById("card").innerHTML = '';
-            console.log(wasm.export_game());
             e.returnValue = false;
         };
 }
 
+/******************************************************************************
+ * addAbility - Loads in form for adding an ability to a game
+ *****************************************************************************/
 const addAbility = () => {
     document.getElementById("card").style.height = '70%';
     let effects = new Map(Object.entries(wasm.export_game().effects));
@@ -758,30 +675,32 @@ const addAbility = () => {
         let targ = document.forms["abilityForm"]["target"].value;
         let cast = document.forms["abilityForm"]["caster"].value;
         let reqs = document.forms["abilityForm"]["require"].value;
-        let mod = document.forms["abilityForm"]["mod"].value;     // may be null
+        let mod = document.forms["abilityForm"]["mod"].value;     
 
         if (targ == "") { targ = null; }
         if (cast == "") { cast = null; }
         if (reqs == "") { reqs = null; }
         if (mod == "") { mod = null; }
         wasm.add_ability(
-            document.forms["abilityForm"]["name"].value,    // 
-            document.forms["abilityForm"]["range"].value,// 
+            document.forms["abilityForm"]["name"].value, 
+            document.forms["abilityForm"]["range"].value,
             document.forms["abilityForm"]["ap"].value,
             document.forms["abilityForm"]["min"].value,
             document.forms["abilityForm"]["max"].value,
             mod,
-            reqs, // may be null
-            targ,  // may be NONE
-            cast   // may be NONE
+            reqs, 
+            targ,  
+            cast   
         );
-        console.log(wasm.export_game());
         document.getElementById("card").style.height = '0%';
         document.getElementById("card").innerHTML = '';
         e.returnValue = false;
     };
 }
 
+/******************************************************************************
+ * addItem - Loads in form for adding an item to a game
+ *****************************************************************************/
 const addItem = () => {
     document.getElementById("card").style.height = '70%';
     let effects = new Map(Object.entries(wasm.export_game().effects));
@@ -815,20 +734,22 @@ const addItem = () => {
         if (effx == "") { effx = null; }
         if (abil == "") { abil = null; }
         wasm.add_item(
-            document.forms["itemForm"]["name"].value,    // 
-            document.forms["itemForm"]["uses"].value,// 
+            document.forms["itemForm"]["name"].value,
+            document.forms["itemForm"]["uses"].value,
             document.forms["itemForm"]["weight"].value,
             slot,
-            effx, // may be null
-            abil  // may be NONE
+            effx, 
+            abil
         );
-        console.log(wasm.export_game());
         document.getElementById("card").style.height = '0%';
         document.getElementById("card").innerHTML = '';
         e.returnValue = false;
     };
 }
 
+/******************************************************************************
+ * addItem - Loads in form for adding a character to a game
+ *****************************************************************************/
 const addCharacter = () => {
     document.getElementById("card").style.height = '70%';
     let token_options = '';
@@ -872,8 +793,6 @@ const addCharacter = () => {
     document.characterForm.onsubmit = function(e) {
         e = e || window.event;
         e.preventDefault();
-        console.log(document.forms["characterForm"]["abils"]);
-        console.log(document.forms["characterForm"]["abils"].options);
         
         let trait = null;
         if (document.forms["characterForm"]["trait"].value != "") {
@@ -909,13 +828,15 @@ const addCharacter = () => {
             }
         }
         reloadNewCharacters();
-        console.log(wasm.export_game());
         document.getElementById("card").style.height = '0%';
         document.getElementById("card").innerHTML = '';
         e.returnValue = false;
     }; 
 }
 
+/******************************************************************************
+ * reloadNewCharacters - Adds unrepresented tokens to list under "place token"
+ *****************************************************************************/
 const reloadNewCharacters = () => {
     document.getElementById("content4").innerHTML = '';
     document.getElementById("button4").disabled = true;
@@ -934,12 +855,15 @@ const reloadNewCharacters = () => {
     }
 }
 
+/******************************************************************************
+ * getOpenSpaces - Flags empty cells after clicking "place token"
+ *****************************************************************************/
 function getOpenSpaces() {
     current_token = options.get(this.id);
     let dim = wasm.get_dimensions();
     let columns = dim[0];
     let rows = dim[1];
-    draw_grid(dim[1], dim[0], wasm.board_to_string());
+    drawStaticGrid(dim[1], dim[0], wasm.board_to_string());
     let tile_map = wasm.board_to_string();
     temp_toks.clear();
     let tile = 0;
@@ -952,24 +876,33 @@ function getOpenSpaces() {
                     continue;
                 }
             }
-            create_clickable('🚩', i + square_size/2, j + square_size/2, j/square_size, i/square_size, placeToken, temp_toks);
+            createClickable('🚩', i + square_size/2, j + square_size/2, j/square_size, i/square_size, placeToken, temp_toks);
             if (tile >= tile_map.length) { end_of_tiles = true; } 
             tile++;
         }
 }
 
+/******************************************************************************
+ * placeToken - Places char token representation on grid and logs it in WASM
+ *****************************************************************************/
 function placeToken() {
     wasm.place_token(current_token, temp_toks.get(this)[0], temp_toks.get(this)[1]);
     reloadNewCharacters();
     let dim = wasm.get_dimensions();
-    draw_grid(dim[1], dim[0], wasm.board_to_string());
+    drawStaticGrid(dim[1], dim[0], wasm.board_to_string());
 }
 
+/******************************************************************************
+ * placeWalls - "Place wall" button's onclick, draws editable version of grids
+ *****************************************************************************/
 function placeWalls() {
     let dim = wasm.get_dimensions();
-    draw_editable_grid(dim[1], dim[0], wasm.board_to_string());
+    drawEditableGrid(dim[1], dim[0], wasm.board_to_string());
 }
 
+/******************************************************************************
+ * resizeBoard - Resize board button's onclick, resizes grid and board in WASM
+ *****************************************************************************/
 function resizeBoard() {
     let row_prompt = parseInt(prompt("Enter the new number of rows for the grid"));
     let col_prompt = parseInt(prompt("Enter the new number of columns for the grid"));
@@ -978,12 +911,12 @@ function resizeBoard() {
         return;
     }
     wasm.resize_board(row_prompt, col_prompt);
-    draw_grid(col_prompt, row_prompt, wasm.board_to_string());
-    console.log(wasm.export_game());
+    drawStaticGrid(col_prompt, row_prompt, wasm.board_to_string());
 }
 
-const tutorial = `{"characters":{"🐉":{"row":2,"column":18,"initiative":2,"sheet":{"name":"Dragon Boss","speed":2,"initiative":2,"hitpoints":14,"max_hp":14,"stats":{"Intelligence":-1,"Wisdom":0,"Strength":4,"Constitution":3,"Dexterity":-3,"Charisma":-4},"traits":[],"items":[],"equipment":{},"abilities":["Slash"],"effects":{}}},"🧝":{"row":0,"column":0,"initiative":4,"sheet":{"name":"Warrior","speed":5,"initiative":4,"hitpoints":20,"max_hp":20,"stats":{"Wisdom":-2,"Strength":3,"Intelligence":0,"Constitution":1,"Charisma":-1,"Dexterity":5},"traits":[],"items":[{"name":"Short sword","uses":-1,"weight":2,"slots":["main_hand"],"effects":[],"abilities":["Slash"]}],"equipment":{},"abilities":[],"effects":{}}},"💀":{"row":6,"column":2,"initiative":0,"sheet":{"name":"Skeleton","speed":4,"initiative":0,"hitpoints":10,"max_hp":10,"stats":{"Constitution":-2,"Strength":2,"Charisma":0,"Wisdom":-4,"Intelligence":-2,"Dexterity":5},"traits":[],"items":[{"name":"Short sword","uses":-1,"weight":2,"slots":["main_hand"],"effects":[],"abilities":["Slash"]}],"equipment":{},"abilities":[],"effects":{}}}},"sheets":{},"abilities":{"Slash":{"name":"Slash","range":1,"action_points":2,"casting_roll":[1,20],"stat_modifier":null,"requirements":[],"target_effects":["Slash damage"],"caster_effects":[]}},"effects":{"Slash":{"name":"Slash","duration":0,"target_stat":"health","modifier":[-10,-1],"temporary":false},"Slash damage":{"name":"Slash damage","duration":0,"target_stat":"health","modifier":[-10,-1],"temporary":false}},"items":{"Short sword":{"name":"Short sword","uses":-1,"weight":2,"slots":["main_hand"],"effects":[],"abilities":["Slash"]}},"grid":[["🧝","0","0","1","0","0","0","1","0","0","0","0","0","0","0","0","0","0","0","0","0","1","0","0","0","0","0","0","0","0"],["0","0","0","1","0","0","0","1","0","1","1","1","1","1","1","1","0","0","0","0","0","1","0","0","0","0","0","0","0","0"],["0","0","0","0","0","0","0","1","0","0","0","0","0","0","0","1","0","0","🐉","0","0","0","0","0","0","0","0","0","0","0"],["1","1","1","1","1","1","0","1","1","1","1","1","1","1","0","1","0","0","0","0","0","1","1","1","1","0","0","1","1","1"],["0","0","0","0","0","0","0","1","0","0","0","0","0","0","0","1","0","0","0","0","0","1","0","0","0","0","0","0","0","0"],["0","0","0","0","0","0","0","1","0","1","1","1","1","1","1","1","1","1","0","1","1","1","0","0","1","1","1","1","1","0"],["0","0","💀","0","0","0","0","1","0","0","0","0","0","0","0","1","0","1","0","1","0","0","0","0","1","0","0","0","0","0"],["1","1","0","1","1","1","1","1","1","1","1","0","1","1","1","1","0","1","0","1","0","0","0","0","1","0","0","0","0","0"],["0","0","0","1","0","0","0","0","0","0","0","0","1","0","0","1","0","1","0","1","1","0","1","1","1","1","1","1","1","1"],["0","0","0","1","0","0","0","0","0","0","0","0","1","0","0","1","0","1","0","1","0","0","0","0","0","0","0","0","0","0"],["0","0","0","1","0","0","0","0","0","0","0","0","1","0","0","0","0","1","0","1","1","1","1","1","1","1","1","1","1","0"],["0","0","0","1","0","0","0","0","0","0","0","0","1","0","0","0","1","1","0","1","0","0","0","0","0","0","0","0","0","0"],["0","0","0","0","0","0","0","0","0","0","0","0","1","0","1","1","1","0","0","1","0","0","0","1","1","1","1","1","1","0"],["0","0","0","1","0","0","0","0","0","0","0","0","1","0","1","0","0","0","1","1","0","0","0","1","0","0","0","0","0","0"],["0","0","0","1","0","0","0","0","0","0","0","0","1","0","0","0","1","1","1","0","0","0","0","1","0","0","0","0","0","0"]],"requests":[]}`;
-
+/******************************************************************************
+ * generateTutorial - Loads game from tutorial var into WASM and uploads to DB
+ *****************************************************************************/
 const generateTutorial = () => {
     wasm.reset_session();
     wasm.load_game(JSON.parse(tutorial));
@@ -998,298 +931,28 @@ const generateTutorial = () => {
     })
 }
 
-function initialSignIn() {
-    signInWithPopup(auth, googleProv)
-        .then((response) => {
-        document.getElementById("user_id").innerHTML = 'User: ' + response.user.displayName;
-        logMessage('Welcome ' + response.user.displayName);
-        current_user = response.user.uid;
-        in_game_name = response.user.displayName;
-        getData();
-        console.log(user_sets);
-        uponSigningIn();
-    })
-}
-
-function getMoves() {
-    action_type = 0;
-    let distance = (set_assignments.get(current_token) / 3.0) * token_data.sheet.speed;
-    highlight_cells(wasm.collect_cell_options(token_data.row, token_data.column, distance, false), clickOption);
-}
-
-function getAbles() {
-    action_type = 1;
-    current_abil_key = options.get(this.id);
-    let abil_range = game_backup.abilities[current_abil_key].range;
-    if (abil_range > 0) {
-        highlight_cells(wasm.collect_cell_options(token_data.row, token_data.column, abil_range, true), clickTarget);
-    }
-}
-
-function clickTarget() {
-    let new_row = temp_toks.get(this)[0];
-    let new_col = temp_toks.get(this)[1];
-    let char = wasm.get_char(token_data.row, token_data.column);
-    console.log(action_type, current_abil_key, wasm.get_char(token_data.row, token_data.column), new_row, new_col);
-
-    let req = wasm.generate_request(action_type, current_abil_key, char, new_row, new_col);
-    if (!requests.has(current_token)) {
-        requests.set(current_token, new Array());
-    }
-    
-    console.log(requests);
-    console.log(requests.get(current_token));
-    let new_arr = requests.get(current_token);
-    new_arr.push(req);
-    requests.set(current_token, new_arr);
-
-    set_assignments.set(char, set_assignments.get(current_token)-2);
-    if (set_assignments.get(current_token) < 1) {
-        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
-        requests.delete(current_token);
-        blockCard();
-    }
-
-    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
-    token_data = wasm.find_character(token_data.row, token_data.column);
-    console.log(token_data);
-    clearTempTokens();
-    loadItems();
-    loadAbles();
-    loadEquip();
-}
-
-socket.on("executeRequest", (req) => {
-    console.log(req);
-    wasm.execute_request(req);
-    clearTempTokens();
-    let dim = wasm.get_dimensions();
-    draw_lines(dim[1], dim[0], wasm.board_to_string());
-    clearTempTokens();
-
-    if (token_data === undefined) return;
-    if (!set_assignments.has(req.caster)) return;
-    if (set_assignments.get(req.caster) <= 0) return;
-
-    options.clear();
-    token_data = wasm.get_character(req.caster); // bugged idk
-    renderCard();
-    loadItems();
-    loadAbles();
-    loadEquip();
-});
-
-function getItems() {
-    action_type = 2;
-    console.log(action_type, options.get(this.id).toString(), wasm.get_char(token_data.row, token_data.column), 0, 0);
-    
-    let req = wasm.generate_request(action_type, options.get(this.id).toString(), wasm.get_char(token_data.row, token_data.column), 0, 0);
-    if (!requests.has(req.caster)) {
-        requests.set(req.caster, new Array());
-    }
-    
-    console.log(requests);
-    console.log(requests.get(current_token));
-    let new_arr = requests.get(current_token);
-    new_arr.push(req);
-    requests.set(current_token, new_arr);
-
-    set_assignments.set(req.caster, set_assignments.get(current_token)-1);
-    if (set_assignments.get(current_token) < 1) {
-        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
-        requests.delete(current_token);
-        blockCard();
-    }
-    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
-    token_data = wasm.find_character(token_data.row, token_data.column);
-    console.log(token_data);
-    clearTempTokens();
-    loadItems();
-    loadAbles();
-    loadEquip();
-}
-
-socket.on("updateBackup", () => {
-    game_backup = wasm.export_game();
-})
-
-function getAccessRequests() { 
-    console.log("geetting requests");
-    console.log(current_session);
-    socket.emit("getAccessRequests", current_session); 
-}
-
-function getEquip() {
-    action_type = 3;
-    console.log(action_type, options.get(this.id).toString(), wasm.get_char(token_data.row, token_data.column), 0, 0);
-    
-    let req = wasm.generate_request(action_type, options.get(this.id).toString(), wasm.get_char(token_data.row, token_data.column), 0, 0);
-    if (!requests.has(req.caster)) {
-        requests.set(req.caster, new Array());
-    }
-    
-    console.log(requests);
-    console.log(requests.get(req.caster));
-    let new_arr = requests.get(req.caster);
-    new_arr.push(req);
-    requests.set(req.caster, new_arr);
-
-    set_assignments.set(req.caster, set_assignments.get(req.caster)-2);
-    if (set_assignments.get(req.caster) <= 0) {
-        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(req.caster));
-        requests.clear();
-    }
-    
-    token_data = wasm.find_character(token_data.row, token_data.column);
-    console.log(token_data);
-    clearTempTokens();
-    loadItems();
-    loadAbles();
-    loadEquip();
-}
-
-document.chat.onsubmit = function(e) {
-    e = e || window.event;
-    e.preventDefault();
-    socket.emit("broadcastLog", current_session, `${in_game_name} says: ${document.forms["chat"]["msg"].value}`);
-    document.forms["chat"]["msg"].value = '';
-    e.returnValue = false;
-};
-
-socket.on("transactionFailed", (str) => { alert(str) });
-
-socket.on("startSession", (room) => {
-    console.log(game_backup);
-    current_session = room;
-    
-    document.getElementById("msg").disabled = false;
-    document.getElementById("sub").disabled = false;
-
-    document.getElementById("session_id").innerHTML = `Session: ${room}`;
-    for (const key in game_backup.characters) {
-        set_assignments.set(`${key}`, 3.0);
-    }
-
-    console.log(set_assignments);
-    application.stage.removeChild(basicText);
-    let dim = wasm.get_dimensions();
-    draw_lines(dim[1], dim[0], wasm.board_to_string());
-    
-    document.getElementById("role_id").innerHTML = 'Role: <button id="dm-button">Dungeon Master</button>';
-    document.getElementById("dm-button").disabled = false;
-    document.getElementById("dm-button").onclick = getAccessRequests;
-    document.getElementById("card").style.height = "70%";
-    document.getElementById("roll-button").disabled = false;
-    document.getElementById("roll-button-label").innerHTML = "End turn";
-    document.getElementById("roll-button").onclick = endTurn;
-    
-    button1.onclick = getMoves;
-    button2.onclick = null;
-    button3.onclick = null;
-    button4.onclick = null;
-
-    button1.innerHTML = "Movements";
-    button2.innerHTML = "Abilities";
-    button3.innerHTML = "Items";
-    button4.innerHTML = "Equipment";
-
-    button1.disabled = true;
-    button2.disabled = true;
-    button3.disabled = true;
-    button4.disabled = true;
-    
-    document.getElementById("content3").innerHTML = "";
-    document.getElementById("content4").innerHTML = "";
-
-    logMessage("Click the dungeon master button on the right to manage pending requests");
-    logMessage("You have " + 3 + " actions left");
-});
-
-socket.on("loadRequests", (requests) => {
-    console.log(requests);
-    token_to_user = new Map();
-    for(var i = 0; i < requests.length; i++) {
-        token_to_user.set(requests[i].reqs[0].caster, requests[i].id);
-        wasm.insert_request(requests[i].reqs[0].caster, requests[i].reqs);
-    }
-    wasm.sort_requests();
-    ordered_requests = wasm.get_requests();
-    listRequests();
-})
-
-function endTurn() {
-    socket.emit("endTurn", current_session);
-    document.getElementById("roll-button").disabled = false;
-    document.getElementById("roll-button-label").innerHTML = "Start next turn";
-    document.getElementById("roll-button").onclick = startTurn;
-}
-
-function startTurn() {
-    console.log("hello");
-    socket.emit("startTurn", current_session, JSON.stringify(wasm.export_game()));
-    document.getElementById("roll-button").disabled = false;
-    document.getElementById("roll-button-label").innerHTML = "End turn";
-    document.getElementById("roll-button").onclick = endTurn;
-}
-
-socket.on("grantAllAccess", () => {
-    for (const key in wasm.export_game().characters) {
-        set_assignments.set(`${key}`, 3.0);
-    }
-})
-
-function startGame() {
-    console.log(options);
-    console.log(this.id);
-    const docRef = doc(db, 'game_sets', options.get(this.id));
-    getDoc(docRef).then((response) => { 
-        if (!response.exists()) { return;}
-        game_backup = JSON.parse(response.data().data);
-        wasm.load_game(game_backup);
-        let room = prompt("Enter a room name");
-        if (room === null) return
-        socket.emit("startHosting", room, current_user, options.get(this.id), this.innerHTML);
-    });
-}
-
-function signOut() {
-    user_sets = null;
-    current_user = null;
-    current_session = null;
-    window.location.reload();
-}
-
-function initCreation() {
-    var set_name = prompt("Enter a name for the new game");
-    if (set_name === null) { return; }
-    if (user_sets != null) { 
-        if (user_sets.has(set_name)) {
-            alert(set_name + ' already taken!'); 
-            return;
-        }
-    }
-
-    wasm.reset_session();
+/******************************************************************************
+ * saveAndExit - Saves the current game being edited to DB and reloads page
+ *****************************************************************************/
+function saveAndExit() {
     let baked_game = JSON.stringify(wasm.export_game());
-    addDoc(collection(db, 'game_sets'), { "data": baked_game }).then((response)=> {
-        setDoc(doc(db, 'user_to_set', current_user), { sets: { [`${set_name}`]: response.id } }, { merge: true })
+    let docRef = doc(db, 'game_sets', current_game);
+    setDoc(docRef, { "data": baked_game }, {merge: true})
             .then(() => {
-                logMessage('Added new game: ' + `${set_name}`);
-                getData();
+                window.location.reload();
             });
-    })
 }
 
-socket.on("syncBoards", () => {
-    wasm.load_game(game_backup);    
-    let dim = wasm.get_dimensions();
-    draw_lines(dim[1], dim[0], wasm.board_to_string());
-})
 
-function transitionPage() {
+////////////////////////////////////////////////    IN-GAME FUNCTIONS    ///////////////////////////////////////////////////////
+
+/******************************************************************************
+ * loadGameView - Changes page elements to the in-game state on loading session
+ *****************************************************************************/
+function loadGameView() {
     application.stage.removeChild(basicText);
     let dim = wasm.get_dimensions();
-    draw_lines(dim[1], dim[0], wasm.board_to_string());
+    drawClickableGrid(dim[1], dim[0], wasm.board_to_string());
     
     document.getElementById("card").style.height = "70%";
     document.getElementById("roll-button").disabled = true;
@@ -1320,6 +983,414 @@ function transitionPage() {
     document.getElementById("sub").disabled = false;
 }
 
+/******************************************************************************
+ * startGame - "Host game" button's onClick, prompts user for new session ID
+ *****************************************************************************/
+function startGame() {
+    const docRef = doc(db, 'game_sets', options.get(this.id));
+    getDoc(docRef).then((response) => { 
+        if (!response.exists()) { return;}
+        game_backup = JSON.parse(response.data().data);
+        wasm.load_game(game_backup);
+        let room = prompt("Enter a room name");
+        if (room === null) return
+        socket.emit("startHosting", room, current_user, options.get(this.id), this.innerHTML);
+    });
+}
+
+/******************************************************************************
+ * joinGame - "Join game" button's onClick, prompts and looks for game by ID
+ *****************************************************************************/
+function joinGame() {
+    let room = prompt("Enter session id");
+    if (room === null) { return; }
+    current_session = room;
+    socket.emit("findSession", current_user, in_game_name, room);
+}
+
+/******************************************************************************
+ * loadAbles - Lists abilities for the currently selected character
+ *****************************************************************************/
+function loadAbles() {
+    button2.disabled = true;
+    document.getElementById("content2").innerHTML = '';
+    for (var i = 0; i < token_data.sheet.abilities.length; i++) {
+        button2.disabled = false;
+        document.getElementById("content2").innerHTML = document.getElementById("content2").innerHTML 
+            + '<button id="abil-button' + i + '" class="mini-collapsible">' 
+            + game_backup.abilities[token_data.sheet.abilities[i]].name + '</button>';
+        options.set('abil-button' + i, token_data.sheet.abilities[i]);
+    }
+    for (var i = 0; i < token_data.sheet.abilities.length; i++) {
+        document.getElementById("abil-button" + (i).toString()).onclick = getAbles;
+    }
+}
+
+/******************************************************************************
+ * loadItems - Lists items for the currently selected character
+ *****************************************************************************/
+function loadItems() {
+    button3.disabled = true;
+    document.getElementById("content3").innerHTML = '';
+    for (var i = 0; i < token_data.sheet.items.length; i++) {
+        button3.disabled = false;
+        document.getElementById("content3").innerHTML = document.getElementById("content3").innerHTML 
+            + '<button id="item-button' + i + '" class="mini-collapsible">' + token_data.sheet.items[i].name + '</button>';
+        options.set('item-button' + i, i);
+    }
+    for (var i = 0; i < token_data.sheet.items.length; i++) {
+        document.getElementById("item-button" + (i).toString()).onclick = getItems;
+    }
+}
+
+/******************************************************************************
+ * loadEquip - Lists equipment for the currently selected character
+ *****************************************************************************/
+function loadEquip() {
+    button4.disabled = true;
+    document.getElementById("content4").innerHTML = '';
+    var equips = new Map(Object.entries(token_data.sheet.equipment))
+    var counter = 0;
+    for (const [key, value] of equips) {
+        button4.disabled = false;
+        document.getElementById("content4").innerHTML = document.getElementById("content4").innerHTML 
+            + '<button id="game-button' + counter + '" class="mini-collapsible">' + value.name + '</button>';
+        options.set('game-button' + counter, key);
+        counter++;
+    }
+    while(counter != 0) {
+        counter--;
+        document.getElementById("game-button" + (counter).toString()).onclick = getEquip;
+    }
+}
+
+/******************************************************************************
+ * getMoves - Movements button's onClick, highlights where the character can go
+ *****************************************************************************/
+function getMoves() {
+    action_type = 0;
+    let distance = (set_assignments.get(current_token) / 3.0) * token_data.sheet.speed;
+    highlight_cells(wasm.collect_cell_options(token_data.row, token_data.column, distance, false), clickDestination);
+}
+
+/******************************************************************************
+ * getAbles - Abilities button's onClick, highlights target cells for abilities
+ *****************************************************************************/
+function getAbles() {
+    action_type = 1;
+    current_abil_key = options.get(this.id);
+    let abil_range = game_backup.abilities[current_abil_key].range;
+    if (abil_range > 0) {
+        highlight_cells(wasm.collect_cell_options(token_data.row, token_data.column, abil_range, true), clickTarget);
+    }
+}
+
+/******************************************************************************
+ * getItems - Generates request to use the selected item 
+ *****************************************************************************/
+function getItems() {
+    action_type = 2;
+    let req = wasm.generate_request(action_type, options.get(this.id).toString(), wasm.get_char(token_data.row, token_data.column), 0, 0);
+    if (!requests.has(req.caster)) { requests.set(req.caster, new Array()) }
+    
+    let new_arr = requests.get(current_token);
+    new_arr.push(req);
+    requests.set(current_token, new_arr);
+    set_assignments.set(req.caster, set_assignments.get(current_token)-1);
+    if (set_assignments.get(current_token) < 1) {
+        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
+        requests.delete(current_token);
+        blockCard();
+    }
+
+    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
+    token_data = wasm.find_character(token_data.row, token_data.column);
+    clearTempTokens();
+    loadItems();
+    loadAbles();
+    loadEquip();
+}
+
+/******************************************************************************
+ * getEquip - Generates request to remove the selected equipment
+ *****************************************************************************/
+function getEquip() {
+    action_type = 3;
+    let req = wasm.generate_request(action_type, options.get(this.id).toString(), 
+        wasm.get_char(token_data.row, token_data.column), 0, 0);
+    if (!requests.has(req.caster)) { requests.set(req.caster, new Array()); }
+    
+    let new_arr = requests.get(req.caster);
+    new_arr.push(req);
+    requests.set(req.caster, new_arr);
+    set_assignments.set(req.caster, set_assignments.get(req.caster)-2);
+    if (set_assignments.get(req.caster) <= 0) {
+        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(req.caster));
+        requests.clear();
+    }
+    
+    token_data = wasm.find_character(token_data.row, token_data.column);
+    clearTempTokens();
+    loadItems();
+    loadAbles();
+    loadEquip();
+}
+
+
+////////////////////////////////////////////////    IN-SESSION FUNCTIONS    ///////////////////////////////////////////////////////
+
+/******************************************************************************
+ * startTurn - "Start turn" button's onclick, starts turn for connected users
+ *****************************************************************************/
+function startTurn() {
+    socket.emit("startTurn", current_session, JSON.stringify(wasm.export_game()));
+    document.getElementById("roll-button").disabled = false;
+    document.getElementById("roll-button-label").innerHTML = "End turn";
+    document.getElementById("roll-button").onclick = endTurn;
+}
+
+/******************************************************************************
+ * endTurn - "End turn" button's onclick, ends turn for connected users
+ *****************************************************************************/
+function endTurn() {
+    socket.emit("endTurn", current_session);
+    document.getElementById("roll-button").disabled = false;
+    document.getElementById("roll-button-label").innerHTML = "Start next turn";
+    document.getElementById("roll-button").onclick = startTurn;
+}
+
+/******************************************************************************
+ * renderCard - Loads the character sheet of the selected token to card div
+ *****************************************************************************/
+function renderCard() {
+    document.getElementById("card").innerHTML = '<h1 class="card-head" style="font-style: italic">' + token_data.sheet.name + '</h1>' +
+        '<h2 class="card-alt"> HP: ' + token_data.sheet.hitpoints + ' / ' + token_data.sheet.max_hp + '</h2>' + 
+        '<h2 class="card-head"> Speed: ' + token_data.sheet.speed + '</h2>' + 
+        '<h2 class="card-alt"> Initiative: ' + token_data.sheet.initiative + '</h2>';
+    let stats = new Map(Object.entries(token_data.sheet.stats));
+    let style = 'class="card-alt"';
+    for (let [key, value] of stats) {
+        if (style == 'class="card-alt"') {style = 'class="card-head"'; }
+        else { style = 'class="card-alt"'; }
+        document.getElementById("card").innerHTML = document.getElementById("card").innerHTML +
+            `<h2 ${style}> ${key}: ${value} </h2>`;
+    }
+}
+
+/******************************************************************************
+ * blockCard - Obscures card div when the user doesn't have access to a token
+ *****************************************************************************/
+function blockCard(key) {
+    document.getElementById("content2").innerHTML = '';
+    document.getElementById("content3").innerHTML = '';
+    document.getElementById("content4").innerHTML = '';
+
+    button1.disabled = true;
+    button2.disabled = true;
+    button3.disabled = true;
+    button4.disabled = true;
+
+    document.getElementById("card").innerHTML = '<h1 class="card-alt">Content Obscured</h1>' + 
+        '<button id="access-button" class="collapsible">Request access to this character </button>';
+    document.getElementById("access-button").onclick = emitAccessRequest;
+    options.set("access-button", key);
+}
+
+/******************************************************************************
+ * emitAccessRequest - "Request access" button's onclick, emits access request
+ *****************************************************************************/
+function emitAccessRequest() {
+    socket.emit("requestAccess", current_session, current_user, in_game_name, options.get("access-button"));
+}
+
+/******************************************************************************
+ * getAccessRequests - Loads in access requests to pending requests list
+ *****************************************************************************/
+function getAccessRequests() { 
+    socket.emit("getAccessRequests", current_session);
+}
+
+/******************************************************************************
+ * listRequests - "Dungeon Master" button's onclick, lists pending requests
+ *****************************************************************************/
+function listRequests() {
+    document.getElementById("card").innerHTML = '<h1 class="card-head">Requests</h1>';
+    for(var i = 0; i < access_req_list.length; i++) {
+        document.getElementById("card").innerHTML = document.getElementById("card").innerHTML + 
+        '<div style="border-bottom: 2.5px solid rgb(100, 100, 100)" id="access-div' + i +  '">' +
+        '<p class="card-alt">' + access_req_list[i].display_name + ' is requesting access to ' + access_req_list[i].token + '</p>' +
+        '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="access-approve' + i + '"> Approve' + '</button>' + 
+        '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="access-decline' + i + '"> Decline' + '</button>' + 
+        '</div>';
+        options.set('access-approve' + i, i);
+        options.set('access-decline' + i, i);
+    }
+    for(var i = 0; i < access_req_list.length; i++) {
+        document.getElementById("access-approve" + i.toString()).onclick = grantAccess;
+        document.getElementById("access-decline" + i.toString()).onclick = removeAccess;
+    }
+
+    for(var i = 0; i < ordered_requests.length; i++) {
+        let str = '';
+        switch(ordered_requests[i].action_type) {
+            case 0: str = `${ordered_requests[i].caster} moves to (${ordered_requests[i].target_cell[0]}, ${ordered_requests[i].target_cell[1]})`; break;
+            case 1: str = `${ordered_requests[i].caster} uses ${game_backup.characters[ordered_requests[i].caster].sheet.items[ordered_requests[i].subtype_key].name}`; break;
+            case 2: str = `${ordered_requests[i].caster} uses ${game_backup.abilities[ordered_requests[i].subtype_key].name}`; break;
+            case 3: str =`${ordered_requests[i].caster} unequips item from ${ordered_requests[i].subtype_key}`; break;
+            default:str = 'Error occured when loading request'; break;
+          }
+        document.getElementById("card").innerHTML = document.getElementById("card").innerHTML + 
+        '<div style="border-bottom: 2.5px solid rgb(100, 100, 100)" id="req-div' + i +  '">' +
+        '<p class="card-alt">' + str + '</p>' +
+        '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="req-approve' + i + '"> Approve' + '</button>' + 
+        '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="req-decline' + i + '"> Decline' + '</button>' + 
+        '</div>';
+        options.set('req-approve' + i, {index: i, request: ordered_requests[i], user: token_to_user.get(ordered_requests[i].caster), msg: str});
+        options.set('req-decline' + i, i);
+    }
+    for(var i = 0; i < ordered_requests.length; i++) {
+        if (ordered_requests[i].action_type == 2) { document.getElementById("req-approve" + i.toString()).onclick = deferToRoll; }
+        else { document.getElementById("req-approve" + i.toString()).onclick = approveRequest; }
+        document.getElementById("req-decline" + i.toString()).onclick = declineRequest;
+    }
+}
+
+/******************************************************************************
+ * approveRequest - Approves request and sends confirmation to the sender
+ *****************************************************************************/
+function approveRequest() {
+    let data = options.get(this.id);
+    ordered_requests.splice(data.index, 1);
+    socket.emit("approveRequest", current_session, data.request, data.user, data.msg);
+    document.getElementById("req-div" + data.index.toString()).remove();
+    listRequests();
+}
+
+/******************************************************************************
+ * declineRequest - Declines request, updates list of requests
+ *****************************************************************************/
+function declineRequest() {
+    ordered_requests.splice(options.get(this.id), 1);
+    document.getElementById("req-div" + options.get(this.id)).remove();
+    listRequests();
+}
+
+/******************************************************************************
+ * grantAccess - Grants access to the character requested by the user
+ *****************************************************************************/
+function grantAccess() {
+    socket.emit("grantAccess", current_session, options.get(this.id));
+    document.getElementById("access-div" + options.get(this.id).toString()).remove();
+    getAccessRequests()
+}
+
+/******************************************************************************
+ * removeAccess - Removes access to the characters belonging to the user
+ *****************************************************************************/
+function removeAccess() {
+    socket.emit("removeAccess", current_session, options.get(this.id));
+    document.getElementById("access-div" + options.get(this.id).toString()).remove();
+    getAccessRequests();
+}
+
+/******************************************************************************
+ * deferToRoll - Pauses approving/denying requests until the user has rolled
+ *****************************************************************************/
+function deferToRoll() {
+    for(var i = 0; i < access_req_list.length; i++) {
+        document.getElementById("access-approve" + i.toString()).disabled = true;
+        document.getElementById("access-decline" + i.toString()).disabled = true;
+    }
+    for(var i = 0; i < ordered_requests.length; i++) {
+        document.getElementById("req-approve" + i.toString()).disabled = true;
+        document.getElementById("req-decline" + i.toString()).disabled = true;
+    }
+    options.set("req-decline" + options.get(this.id).index.toString(), options.get(this.id));
+    document.getElementById("req-decline" + options.get(this.id).index).disabled = false;
+    document.getElementById("req-decline" + options.get(this.id).index).onclick = cancelRoll;
+    socket.emit("emitRollRequest", current_session, options.get(this.id));
+}
+
+/******************************************************************************
+ * cancelRoll - Resumes approving/denying requests, cancels user's roll
+ *****************************************************************************/
+function cancelRoll() {
+    socket.emit("removeRollRequest", current_session, options.get(this.id));
+    let index = options.get(this.id).index;
+    options.set(this.id, index);
+}
+
+/******************************************************************************
+ * roll20 - Randomized D20 roll to cast an ability
+ *****************************************************************************/
+function roll20() {
+    document.getElementById('roll-button').disabled = true;
+    document.getElementById('roll-button-label').innerHTML = '';
+    document.getElementById('roll-button').onclick = '';
+    let roll = Math.floor(Math.random() * 20) + 1;
+    let name = options.get(this.id).request.caster;
+    socket.emit("roll20", current_session, roll, name, options.get(this.id).index);
+    options.delete('roll-button');
+}
+
+
+////////////////////////////////////////////////    WEBSOCKET FUNCTIONS    /////////////////////////////////////////////////////
+
+/******************************************************************************
+ * Socket-connect - On connection log socket id
+ *****************************************************************************/
+socket.on("connect", () => {
+    logMessage(`Connected to socket with id: ${socket.id} `);
+})
+
+/******************************************************************************
+ * Socket-startSession - Load game view for host once the session starts
+ *****************************************************************************/
+socket.on("startSession", (room) => {
+    current_session = room;
+    document.getElementById("msg").disabled = false;
+    document.getElementById("sub").disabled = false;
+    document.getElementById("session_id").innerHTML = `Session: ${room}`;
+    for (const key in game_backup.characters) {
+        set_assignments.set(`${key}`, 3.0);
+    }
+
+    application.stage.removeChild(basicText);
+    let dim = wasm.get_dimensions();
+    drawClickableGrid(dim[1], dim[0], wasm.board_to_string());
+    
+    document.getElementById("role_id").innerHTML = 'Role: <button id="dm-button">Dungeon Master</button>';
+    document.getElementById("dm-button").disabled = false;
+    document.getElementById("dm-button").onclick = getAccessRequests;
+    document.getElementById("card").style.height = "70%";
+    document.getElementById("roll-button").disabled = false;
+    document.getElementById("roll-button-label").innerHTML = "End turn";
+    document.getElementById("roll-button").onclick = endTurn;
+    
+    button1.onclick = getMoves;
+    button2.onclick = null;
+    button3.onclick = null;
+    button4.onclick = null;
+
+    button1.innerHTML = "Movements";
+    button2.innerHTML = "Abilities";
+    button3.innerHTML = "Items";
+    button4.innerHTML = "Equipment";
+
+    button1.disabled = true;
+    button2.disabled = true;
+    button3.disabled = true;
+    button4.disabled = true;
+    
+    document.getElementById("content3").innerHTML = "";
+    document.getElementById("content4").innerHTML = "";
+    logMessage("Click the dungeon master button on the right to manage pending requests");
+    logMessage("You have " + 3 + " actions left");
+});
+
+/******************************************************************************
+ * Socket-joinGame - Retrieve DB set key from room, load game view on success
+ *****************************************************************************/
 socket.on("joinGame", (room, key, assignments, game) => {
     document.getElementById("session_id").innerHTML = `Session: ${room}`;
     if (game == null) {
@@ -1327,44 +1398,34 @@ socket.on("joinGame", (room, key, assignments, game) => {
         getDoc(docRef).then((response) => { 
             if (!response.exists()) { return; }
             if (assignments === null) set_assignments = new Map();
-            else { 
-                for (let i = 0; i <assignments.length; i++) {
-                    set_assignments.set(assignments[i], 3.0);
-                }
-            }
+            else { for (let i = 0; i <assignments.length; i++) { set_assignments.set(assignments[i], 3.0); } }
 
             game_backup = JSON.parse(response.data().data);
             current_session = room;
-            console.log(game_backup);
             wasm.load_game(game_backup);
-
-            transitionPage();
+            loadGameView();
             return;
         });
     }
     else {
-        console.log(assignments);
-        if (assignments === null) set_assignments = new Map();
-        else { 
-            for (let i = 0; i <assignments.length; i++) {
-                set_assignments.set(assignments[i], 3.0);
-            }
-        }
+        if (assignments === null) { set_assignments = new Map(); }
+        else { for (let i = 0; i <assignments.length; i++) { set_assignments.set(assignments[i], 3.0); } }
         wasm.load_game(JSON.parse(game));
         game_backup = wasm.export_game();
-        transitionPage();
+        loadGameView();
     }
-})
+});
 
+/******************************************************************************
+ * Socket-hostRejoin - Loads view of the in progress game as the host
+ *****************************************************************************/
 socket.on("hostRejoin", (room, key, game) => {
     document.getElementById("session_id").innerHTML = `Session: ${room}`;
-    console.log(room);
     if (game == null) {
         const docRef = doc(db, 'game_sets', key);
         getDoc(docRef).then((response) => { 
             if (!response.exists()) { return; }
             game_backup = JSON.parse(response.data().data);
-            console.log(game_backup);
             wasm.load_game(game_backup);
             socket.emit("confirmSession", room);
             return;
@@ -1375,23 +1436,131 @@ socket.on("hostRejoin", (room, key, game) => {
         game_backup = wasm.export_game();
         socket.emit("confirmSession", room);
     }
+});
+
+/******************************************************************************
+ * Socket-loadRequests - Lists pending requests stored in the session
+ *****************************************************************************/
+socket.on("loadRequests", (requests) => {
+    token_to_user = new Map();
+    for(var i = 0; i < requests.length; i++) {
+        token_to_user.set(requests[i].reqs[0].caster, requests[i].id);
+        wasm.insert_request(requests[i].reqs[0].caster, requests[i].reqs);
+    }
+    wasm.sort_requests();
+    ordered_requests = wasm.get_requests();
+    listRequests();
+});
+
+/******************************************************************************
+ * Socket-executeRequest - Execute the current request for this user
+ *****************************************************************************/
+socket.on("executeRequest", (req) => {
+    wasm.execute_request(req);
+    clearTempTokens();
+    let dim = wasm.get_dimensions();
+    drawClickableGrid(dim[1], dim[0], wasm.board_to_string());
+    clearTempTokens();
+
+    if (token_data === undefined) return;
+    if (!set_assignments.has(req.caster)) return;
+    if (set_assignments.get(req.caster) <= 0) return;
+
+    options.clear();
+    token_data = wasm.get_character(req.caster); // bugged idk
+    renderCard();
+    loadItems();
+    loadAbles();
+    loadEquip();
+});
+
+/******************************************************************************
+ * Socket-enableRoll - Enable rolling for this user
+ *****************************************************************************/
+socket.on("enableRoll", (request_data) => {
+    priorButton = { oHTML: document.getElementById('roll-button').outerHTML, iHTML: document.getElementById('roll-button').innerHTML,
+        dis: document.getElementById('roll-button').disabled, click: document.getElementById('roll-button').onclick };
+    document.getElementById('roll-button').disabled = false;
+    document.getElementById('roll-button-label').innerHTML = 'Roll to attempt ' + game_backup.abilities[request_data.request.subtype_key].name;
+    document.getElementById('roll-button').onclick = roll20;
+    options.set('roll-button', request_data);
+});
+
+/******************************************************************************
+ * Socket-removeRoll - Disable rolling for this user
+ *****************************************************************************/
+socket.on("removeRoll", () => {
+    document.getElementById('roll-button').outerHTML = priorButton.oHTML;
+    document.getElementById('roll-button').innerHTML = priorButton.iHTML;
+    document.getElementById('roll-button').disabled = priorButton.dis;
+    document.getElementById('roll-button').onclick = priorButton.click;
+});
+
+/******************************************************************************
+ * Socket-confirmSuccess - Approves request through host when user roll passes
+ *****************************************************************************/
+socket.on("confirmSuccess", (index) => {
+    document.getElementById("req-approve" + index.toString()).onclick = approveRequest;
+    document.getElementById("req-approve" + index.toString()).disabled = false;
+    document.getElementById("req-approve" + index.toString()).click();
+});
+
+/******************************************************************************
+ * Socket-confirmFailure - Declines request through host when user roll fails
+ *****************************************************************************/
+socket.on("confirmFailure", (index) => {
+    document.getElementById("req-decline" + index.toString()).click();
+    document.getElementById("req-decline" + index.toString()).onclick = declineRequest;
+    document.getElementById("req-decline" + index.toString()).click();
+});
+
+/******************************************************************************
+ * Socket-addTokenAccess - Gives the current user access to a token
+ *****************************************************************************/
+socket.on("addTokenAccess", (token) => {
+    if (token === null) 
+        { set_assignments = new Map(); blockCard(); return; }
+    document.getElementById("role_id").innerHTML = 'Role: ' + game_backup.characters[token].sheet.name;
+    set_assignments.set(token, 3.0);
+});
+
+/******************************************************************************
+ * Socket-loadAccessRequests - Retrieves pending requests from game session
+ *****************************************************************************/
+socket.on("loadAccessRequests", (list) => {
+    access_req_list = list;
+    listRequests();
 })
 
-function joinGame() {
-    let room = prompt("Enter session id");
-    if (room === null) {return}
-    current_session = room;
-    socket.emit("findSession", current_user, in_game_name, room);
-}
+/******************************************************************************
+ * Socket-grantAllAccess - Gives access to all tokens on the board
+ *****************************************************************************/
+socket.on("grantAllAccess", () => {
+    for (const key in wasm.export_game().characters) {
+        set_assignments.set(`${key}`, 3.0);
+    }
+});
 
-// Signed in, no session
-function uponSigningIn() {
-    document.getElementById("roll-button").onclick = signOut;
-    document.getElementById("roll-button-label").innerHTML = 'Sign Out';
-    button1.disabled = false;
-    button2.disabled = false;
-    button1.onclick = initCreation;
-    button2.onclick = joinGame;
-}
+/******************************************************************************
+ * Socket-syncBoards - Syncing board the game backup at the start of the turn
+ *****************************************************************************/
+socket.on("syncBoards", () => {
+    wasm.load_game(game_backup);    
+    let dim = wasm.get_dimensions();
+    drawClickableGrid(dim[1], dim[0], wasm.board_to_string());
+});
 
-// Signed in, with a session
+/******************************************************************************
+ * Socket-socketLog - Inserts msg as string message to the log
+ *****************************************************************************/
+socket.on("socketLog", (msg) => { logMessage(msg) });
+
+/******************************************************************************
+ * Socket-backupGame - Exports game and saves it to the game_backup var
+ *****************************************************************************/
+socket.on("backupGame", () => { game_backup = wasm.export_game() });
+
+/******************************************************************************
+ * Socket-transactionFailed - Alert if something failed serverside
+ *****************************************************************************/
+socket.on("transactionFailed", (str) => { alert(str) });

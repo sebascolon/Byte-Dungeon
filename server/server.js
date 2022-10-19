@@ -4,17 +4,6 @@ const io = require('socket.io')(3000, {
     }    
 })
 
-let sample_session = {
-    name: new String(),
-    dm_id: new String(),
-    set_id: new String(),
-    sockets: new Map(),
-    request_queue: new Array(),
-    role_assignments: new Map(),
-    game_cache: new Object(),
-    access_requests: new Array()
-}
-
 var game_keys = new Map();
 
 io.on('connection', socket => {
@@ -82,7 +71,6 @@ io.on('connection', socket => {
             game_res.request_queue = new_reqs;
             game_keys.set(game_res);
             io.to(room_id).emit("socketLog", (`'${username}' has ended turn`));
-            //socket.emit("addTokenAccess", (null));
             console.log(game_res);
         }
         else io.to(socket.id).emit("transactionFailed", (`Couldn't find game: '${room_id}'`));
@@ -158,7 +146,7 @@ io.on('connection', socket => {
         else io.to(socket.id).emit("transactionFailed", (`Couldn't find game: '${room_id}'`));
     })
 
-    socket.on("approveRequest", (room, request, uid, msg) => {
+    socket.on("approveRequest", (room, request, msg) => {
         if (game_keys.has(room)) {
             io.to(room).emit("executeRequest", request);
             io.to(room).emit("socketLog", msg);

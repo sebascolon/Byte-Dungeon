@@ -112,9 +112,24 @@ function getInt32Memory0() {
     return cachedInt32Memory0;
 }
 /**
+* @param {any} data
 */
-export function greet() {
-    wasm.greet();
+export function load_game(data) {
+    wasm.load_game(addHeapObject(data));
+}
+
+/**
+* @returns {any}
+*/
+export function export_game() {
+    const ret = wasm.export_game();
+    return takeObject(ret);
+}
+
+/**
+*/
+export function reset_session() {
+    wasm.reset_session();
 }
 
 /**
@@ -124,58 +139,6 @@ export function greet() {
 */
 export function get_char(row, col) {
     const ret = wasm.get_char(row, col);
-    return takeObject(ret);
-}
-
-/**
-* @param {any} request
-*/
-export function execute_request(request) {
-    wasm.execute_request(addHeapObject(request));
-}
-
-/**
-* @param {string} token
-* @param {any} request
-*/
-export function insert_request(token, request) {
-    wasm.insert_request(token.codePointAt(0), addHeapObject(request));
-}
-
-/**
-*/
-export function sort_requests() {
-    wasm.sort_requests();
-}
-
-/**
-* @returns {any}
-*/
-export function get_requests() {
-    const ret = wasm.get_requests();
-    return takeObject(ret);
-}
-
-/**
-* @returns {any}
-*/
-export function board_to_string() {
-    const ret = wasm.board_to_string();
-    return takeObject(ret);
-}
-
-/**
-* @param {number} a_type
-* @param {string} key
-* @param {string} tok
-* @param {number} end_row
-* @param {number} end_col
-* @returns {any}
-*/
-export function generate_request(a_type, key, tok, end_row, end_col) {
-    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.generate_request(a_type, ptr0, len0, tok.codePointAt(0), end_row, end_col);
     return takeObject(ret);
 }
 
@@ -190,61 +153,12 @@ export function find_character(row, col) {
 }
 
 /**
-* @param {number} rows
-* @param {number} cols
-*/
-export function resize_board(rows, cols) {
-    wasm.resize_board(rows, cols);
-}
-
-/**
 * @param {string} key
 * @returns {any}
 */
 export function get_character(key) {
     const ret = wasm.get_character(key.codePointAt(0));
     return takeObject(ret);
-}
-
-/**
-* @param {number} row
-* @param {number} column
-* @param {number} range
-* @param {boolean} target
-* @returns {any}
-*/
-export function collect_cell_options(row, column, range, target) {
-    const ret = wasm.collect_cell_options(row, column, range, target);
-    return takeObject(ret);
-}
-
-/**
-* @param {any} data
-*/
-export function load_game(data) {
-    wasm.load_game(addHeapObject(data));
-}
-
-/**
-* @param {number} row
-* @param {number} col
-* @returns {any}
-*/
-export function toggle_cell(row, col) {
-    const ret = wasm.toggle_cell(row, col);
-    return takeObject(ret);
-}
-
-/**
-*/
-export function reset_session() {
-    wasm.reset_session();
-}
-
-/**
-*/
-export function output_grid() {
-    wasm.output_grid();
 }
 
 /**
@@ -256,16 +170,10 @@ export function get_dimensions() {
 }
 
 /**
-*/
-export function generate_tutorial() {
-    wasm.generate_tutorial();
-}
-
-/**
 * @returns {any}
 */
-export function export_game() {
-    const ret = wasm.export_game();
+export function board_to_string() {
+    const ret = wasm.board_to_string();
     return takeObject(ret);
 }
 
@@ -298,50 +206,15 @@ export function add_character(tk, nm, sp, iv, hp, mp, st, dx, cn, it, ws, ch, tr
 }
 
 /**
-* @param {string} token
-* @param {string} item_key
-*/
-export function give_item(token, item_key) {
-    const ptr0 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(item_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    wasm.give_item(ptr0, len0, ptr1, len1);
-}
-
-/**
-* @param {string} token
-* @param {number} row
-* @param {number} col
-*/
-export function place_token(token, row, col) {
-    const ptr0 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    wasm.place_token(ptr0, len0, row, col);
-}
-
-/**
-* @param {string} token
-* @param {string} abil_key
-*/
-export function give_ability(token, abil_key) {
-    const ptr0 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(abil_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    wasm.give_ability(ptr0, len0, ptr1, len1);
-}
-
-/**
-* @param {string} nm
-* @param {number} us
+* @param {string} name
+* @param {number} uses
 * @param {number} wgt
 * @param {string | undefined} slot
 * @param {string | undefined} effx
 * @param {string | undefined} abil
 */
-export function add_item(nm, us, wgt, slot, effx, abil) {
-    const ptr0 = passStringToWasm0(nm, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+export function add_item(name, uses, wgt, slot, effx, abil) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     var ptr1 = isLikeNone(slot) ? 0 : passStringToWasm0(slot, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     var len1 = WASM_VECTOR_LEN;
@@ -349,7 +222,7 @@ export function add_item(nm, us, wgt, slot, effx, abil) {
     var len2 = WASM_VECTOR_LEN;
     var ptr3 = isLikeNone(abil) ? 0 : passStringToWasm0(abil, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     var len3 = WASM_VECTOR_LEN;
-    wasm.add_item(ptr0, len0, us, wgt, ptr1, len1, ptr2, len2, ptr3, len3);
+    wasm.add_item(ptr0, len0, uses, wgt, ptr1, len1, ptr2, len2, ptr3, len3);
 }
 
 /**
@@ -394,6 +267,91 @@ export function add_effect(nm, dur, target, low, high, temp) {
 }
 
 /**
+* @param {number} a_type
+* @param {string} key
+* @param {string} tok
+* @param {number} end_row
+* @param {number} end_col
+* @returns {any}
+*/
+export function generate_request(a_type, key, tok, end_row, end_col) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.generate_request(a_type, ptr0, len0, tok.codePointAt(0), end_row, end_col);
+    return takeObject(ret);
+}
+
+/**
+* @returns {any}
+*/
+export function get_requests() {
+    const ret = wasm.get_requests();
+    return takeObject(ret);
+}
+
+/**
+* @param {string} token
+* @param {any} request
+*/
+export function insert_request(token, request) {
+    wasm.insert_request(token.codePointAt(0), addHeapObject(request));
+}
+
+/**
+*/
+export function sort_requests() {
+    wasm.sort_requests();
+}
+
+/**
+* @param {any} request
+*/
+export function execute_request(request) {
+    wasm.execute_request(addHeapObject(request));
+}
+
+/**
+* @param {number} rows
+* @param {number} cols
+*/
+export function resize_board(rows, cols) {
+    wasm.resize_board(rows, cols);
+}
+
+/**
+* @param {number} row
+* @param {number} col
+* @returns {any}
+*/
+export function toggle_cell(row, col) {
+    const ret = wasm.toggle_cell(row, col);
+    return takeObject(ret);
+}
+
+/**
+* @param {string} token
+* @param {number} row
+* @param {number} col
+*/
+export function place_token(token, row, col) {
+    const ptr0 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    wasm.place_token(ptr0, len0, row, col);
+}
+
+/**
+* @param {number} row
+* @param {number} column
+* @param {number} range
+* @param {boolean} target
+* @returns {any}
+*/
+export function collect_cell_options(row, column, range, target) {
+    const ret = wasm.collect_cell_options(row, column, range, target);
+    return takeObject(ret);
+}
+
+/**
 * @param {number} src_row
 * @param {number} src_col
 * @param {number} end_row
@@ -405,13 +363,29 @@ export function get_cell_distance(src_row, src_col, end_row, end_col) {
     return ret;
 }
 
-export function __wbg_log_13a8b9bdc9ade567(arg0, arg1) {
-    console.log(getStringFromWasm0(arg0, arg1));
-};
+/**
+* @param {string} token
+* @param {string} item_key
+*/
+export function give_item(token, item_key) {
+    const ptr0 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(item_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    wasm.give_item(ptr0, len0, ptr1, len1);
+}
 
-export function __wbg_alert_37f6babd16c52b7e(arg0, arg1) {
-    alert(getStringFromWasm0(arg0, arg1));
-};
+/**
+* @param {string} token
+* @param {string} abil_key
+*/
+export function give_ability(token, abil_key) {
+    const ptr0 = passStringToWasm0(token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(abil_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    wasm.give_ability(ptr0, len0, ptr1, len1);
+}
 
 export function __wbindgen_object_drop_ref(arg0) {
     takeObject(arg0);

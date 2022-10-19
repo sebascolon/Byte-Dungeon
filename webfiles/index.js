@@ -52,7 +52,7 @@ let button2 = document.getElementById("button2");
 let button3 = document.getElementById("button3");
 let button4 = document.getElementById("button4");
 
-const socket = io('https://western-rider-361904.wm.r.appspot.com');
+const socket = io('http://localhost:3000/');
 var square_size = window.innerWidth/24;
 var token_chars =                                       // List of all char representation of tokens
     ['🧑','👩','👹','👺','👿','👻','💀','🧙','🧚','🧛','🧝','🧞','🧟','👤','🌬','🐾','🐺','🐎','🦇','🐉',
@@ -158,7 +158,7 @@ for (i = 0; i < coll.length; i++) {
         { content.style.maxHeight = content.scrollHeight + "px"; } 
   });
 }
-
+// "Send message" button's onSubmit for messaging players in the same room
 document.chat.onsubmit = function(e) {
     e = e || window.event;
     e.preventDefault();
@@ -291,8 +291,8 @@ function drawClickableGrid(rows, columns, tile_map)
     application.renderer.resize((square_size*rows), (square_size*columns));
     let tile = 0;
     let end_of_tiles = false;
-    for (let j = 0; j < (square_size*columns); j+= square_size)
-        for (let i = 0; i < (square_size*rows); i+=square_size) {
+    for (let j = 0; j/(square_size*columns) <= .999; j+= square_size)
+        for (let i = 0; i / (square_size*rows) <= .999; i+=square_size) {
             const box = new PIXI.Graphics()
             .lineStyle(1, 0xBBBBBB, 1);
             if (tile_map[tile] == '1') {
@@ -330,8 +330,8 @@ function drawStaticGrid(rows, columns, tile_map)
     application.renderer.resize((square_size*rows), (square_size*columns));
     let tile = 0;
     let end_of_tiles = false;
-    for (let j = 0; j < (square_size*columns); j+= square_size)
-        for (let i = 0; i < (square_size*rows); i+=square_size) {
+    for (let j = 0; j/(square_size*columns) <= .999; j+= square_size)
+        for (let i = 0; i / (square_size*rows) <= .999; i+=square_size) {
             const box = new PIXI.Graphics()
             .lineStyle(1, 0xBBBBBB, 1);
             if (tile_map[tile] == '1') {
@@ -369,8 +369,8 @@ function drawEditableGrid(rows, columns, tile_map)
     application.renderer.resize((square_size*rows), (square_size*columns));
     let tile = 0;
     let end_of_tiles = false;
-    for (let j = 0; j < (square_size*columns); j+= square_size)
-        for (let i = 0; i < (square_size*rows); i+=square_size) {
+    for (let j = 0; j/(square_size*columns) <= .999; j+= square_size)
+        for (let i = 0; i / (square_size*rows) <= .999; i+=square_size) {
             let char = '0';
             if (!end_of_tiles) 
                 { char = tile_map[tile]; }
@@ -508,19 +508,23 @@ function clickDestination() {
     new_arr.push(req);
     requests.set(current_token, new_arr);
 
-    set_assignments.set(wasm.get_char(new_row, new_col), set_assignments.get(wasm.get_char(new_row, new_col))-ap_cost);
-    if (set_assignments.get(wasm.get_char(new_row, new_col)) < 1) {
-        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
-        requests.delete(current_token);
-        blockCard();
-    }
     logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
     clearTempTokens();
+
+    set_assignments.set(wasm.get_char(new_row, new_col), set_assignments.get(wasm.get_char(new_row, new_col))-ap_cost);
     token_data = wasm.find_character(new_row, new_col);
     current_token = wasm.get_char(new_row, new_col);
     let dim = wasm.get_dimensions();
     drawClickableGrid(dim[1], dim[0], wasm.board_to_string());
-    logMessage("move " + token_data.sheet.name + " to point " + new_row + ", " +  new_col);
+
+    if (set_assignments.get(wasm.get_char(new_row, new_col)) < 1) {
+        socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
+        requests.delete(current_token);
+        blockCard();
+        return;
+    }
+    
+    logMessage("Move " + token_data.sheet.name + " to point " + new_row + ", " +  new_col);
     loadItems();
     loadAbles();
     loadEquip();
@@ -540,15 +544,17 @@ function clickTarget() {
     new_arr.push(req);
     requests.set(current_token, new_arr);
     set_assignments.set(char, set_assignments.get(current_token)-2);
+    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
+    clearTempTokens();
+
     if (set_assignments.get(current_token) < 1) {
         socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
         requests.delete(current_token);
         blockCard();
+        return;
     }
 
-    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
     token_data = wasm.find_character(token_data.row, token_data.column);
-    clearTempTokens();
     loadItems();
     loadAbles();
     loadEquip();
@@ -667,8 +673,10 @@ const addAbility = () => {
         Casting roll max: <input type="number" name="max" style="margin-top: 8px" required> <br>
         Stat modifier: <input type="text" name="mod" style="margin-top: 8px"> <br>
         Requirement: <input type="text" name="require" style="margin-top: 8px"> <br>
-        <label for="target">Target effect:</label> <select id="target" name="target" form="abil-form">${effect_options}</select>
-        <br><label for="caster">Caster effect:</label> <select id="caster" name="caster" form="abil-form">${effect_options}</select></form>`;
+        <select id="target" name="target" form="abil-form">${effect_options}</select><br>
+        <select id="caster" name="caster" form="abil-form">${effect_options}</select>
+        <label for="target">Target effect:</label>
+        <label for="caster">Caster effect:</label></form>`;
     document.abilityForm.onsubmit = function(e) {
         e = e || window.event;
         e.preventDefault();
@@ -868,8 +876,8 @@ function getOpenSpaces() {
     temp_toks.clear();
     let tile = 0;
     let end_of_tiles = false;
-    for (let j = 0; j < (square_size*columns); j+= square_size)
-        for (let i = 0; i < (square_size*rows); i+=square_size) {
+    for (let j = 0; j/(square_size*columns) <= .999; j+= square_size)
+        for (let i = 0; i / (square_size*rows) <= .999; i+=square_size) {
             if (!end_of_tiles){
                 if (tile_map[tile] != '0') {
                     tile++;
@@ -1090,22 +1098,25 @@ function getAbles() {
  *****************************************************************************/
 function getItems() {
     action_type = 2;
-    let req = wasm.generate_request(action_type, options.get(this.id).toString(), wasm.get_char(token_data.row, token_data.column), 0, 0);
+    let req = wasm.generate_request(action_type, options.get(this.id).toString(), current_token, 0, 0);
     if (!requests.has(req.caster)) { requests.set(req.caster, new Array()) }
     
     let new_arr = requests.get(current_token);
     new_arr.push(req);
     requests.set(current_token, new_arr);
     set_assignments.set(req.caster, set_assignments.get(current_token)-1);
+
+    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
+    clearTempTokens();
+
     if (set_assignments.get(current_token) < 1) {
         socket.emit("addTurn", current_session, current_user, in_game_name, requests.get(current_token));
         requests.delete(current_token);
         blockCard();
+        return;
     }
 
-    logMessage(`You have ${parseInt(set_assignments.get(current_token))} actions left`);
     token_data = wasm.find_character(token_data.row, token_data.column);
-    clearTempTokens();
     loadItems();
     loadAbles();
     loadEquip();
@@ -1137,7 +1148,7 @@ function getEquip() {
 }
 
 
-////////////////////////////////////////////////    IN-SESSION FUNCTIONS    ///////////////////////////////////////////////////////
+////////////////////////////////////////////////    IN-SESSION FUNCTIONS    ////////////////////////////////////////////////////
 
 /******************************************************************************
  * startTurn - "Start turn" button's onclick, starts turn for connected users
@@ -1163,7 +1174,7 @@ function endTurn() {
  * renderCard - Loads the character sheet of the selected token to card div
  *****************************************************************************/
 function renderCard() {
-    document.getElementById("card").innerHTML = '<h1 class="card-head" style="font-style: italic">' + token_data.sheet.name + '</h1>' +
+    document.getElementById("card").innerHTML ='<h1 class="card-head" style="font-style:italic">'+token_data.sheet.name+'</h1>'+
         '<h2 class="card-alt"> HP: ' + token_data.sheet.hitpoints + ' / ' + token_data.sheet.max_hp + '</h2>' + 
         '<h2 class="card-head"> Speed: ' + token_data.sheet.speed + '</h2>' + 
         '<h2 class="card-alt"> Initiative: ' + token_data.sheet.initiative + '</h2>';
@@ -1218,7 +1229,7 @@ function listRequests() {
     for(var i = 0; i < access_req_list.length; i++) {
         document.getElementById("card").innerHTML = document.getElementById("card").innerHTML + 
         '<div style="border-bottom: 2.5px solid rgb(100, 100, 100)" id="access-div' + i +  '">' +
-        '<p class="card-alt">' + access_req_list[i].display_name + ' is requesting access to ' + access_req_list[i].token + '</p>' +
+        '<p class="card-alt">' + access_req_list[i].display_name +' is requesting access to '+ access_req_list[i].token +'</p>'+
         '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="access-approve' + i + '"> Approve' + '</button>' + 
         '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="access-decline' + i + '"> Decline' + '</button>' + 
         '</div>';
@@ -1232,24 +1243,30 @@ function listRequests() {
 
     for(var i = 0; i < ordered_requests.length; i++) {
         let str = '';
-        switch(ordered_requests[i].action_type) {
-            case 0: str = `${ordered_requests[i].caster} moves to (${ordered_requests[i].target_cell[0]}, ${ordered_requests[i].target_cell[1]})`; break;
-            case 1: str = `${ordered_requests[i].caster} uses ${game_backup.characters[ordered_requests[i].caster].sheet.items[ordered_requests[i].subtype_key].name}`; break;
-            case 2: str = `${ordered_requests[i].caster} uses ${game_backup.abilities[ordered_requests[i].subtype_key].name}`; break;
-            case 3: str =`${ordered_requests[i].caster} unequips item from ${ordered_requests[i].subtype_key}`; break;
-            default:str = 'Error occured when loading request'; break;
-          }
+        let req = ordered_requests[i];
+        switch(req.action_type) {
+            case 0: str = `${req.caster} moves to (${req.target_cell[0]}, ${req.target_cell[1]})`; break;
+            case 1: str = `${req.caster} uses ${game_backup.characters[req.caster].sheet.items[req.subtype_key].name}`; break
+            case 2: str = `${req.caster} uses ${game_backup.abilities[req.subtype_key].name}`; break;
+            case 3: str = `${req.caster} unequips item from ${req.subtype_key}`; break;
+            default:str = 'Error occured when loading request, likely could not find action type'; break;
+        }
         document.getElementById("card").innerHTML = document.getElementById("card").innerHTML + 
         '<div style="border-bottom: 2.5px solid rgb(100, 100, 100)" id="req-div' + i +  '">' +
         '<p class="card-alt">' + str + '</p>' +
         '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="req-approve' + i + '"> Approve' + '</button>' + 
         '<button style="margin-left:2.5px;margin-bottom:2.5px;" id="req-decline' + i + '"> Decline' + '</button>' + 
         '</div>';
-        options.set('req-approve' + i, {index: i, request: ordered_requests[i], user: token_to_user.get(ordered_requests[i].caster), msg: str});
+        options.set('req-approve' + i, {
+            index: i, 
+            request: ordered_requests[i], 
+            user: token_to_user.get(ordered_requests[i].caster), 
+            msg: str
+        });
         options.set('req-decline' + i, i);
     }
     for(var i = 0; i < ordered_requests.length; i++) {
-        if (ordered_requests[i].action_type == 2) { document.getElementById("req-approve" + i.toString()).onclick = deferToRoll; }
+        if (ordered_requests[i].action_type == 2) {document.getElementById("req-approve" + i.toString()).onclick = deferToRoll}
         else { document.getElementById("req-approve" + i.toString()).onclick = approveRequest; }
         document.getElementById("req-decline" + i.toString()).onclick = declineRequest;
     }
@@ -1331,6 +1348,10 @@ function roll20() {
     let name = options.get(this.id).request.caster;
     socket.emit("roll20", current_session, roll, name, options.get(this.id).index);
     options.delete('roll-button');
+    document.getElementById('roll-button').outerHTML = priorButton.oHTML;
+    document.getElementById('roll-button').innerHTML = priorButton.iHTML;
+    document.getElementById('roll-button').disabled = priorButton.dis;
+    document.getElementById('roll-button').onclick = priorButton.click;
 }
 
 
@@ -1466,22 +1487,23 @@ socket.on("executeRequest", (req) => {
     if (!set_assignments.has(req.caster)) return;
     if (set_assignments.get(req.caster) <= 0) return;
 
-    options.clear();
     token_data = wasm.get_character(req.caster); // bugged idk
-    renderCard();
-    loadItems();
-    loadAbles();
-    loadEquip();
+    console.log("AAAHHHHHHHHH");
 });
 
 /******************************************************************************
  * Socket-enableRoll - Enable rolling for this user
  *****************************************************************************/
 socket.on("enableRoll", (request_data) => {
-    priorButton = { oHTML: document.getElementById('roll-button').outerHTML, iHTML: document.getElementById('roll-button').innerHTML,
-        dis: document.getElementById('roll-button').disabled, click: document.getElementById('roll-button').onclick };
+    priorButton = { 
+        oHTML: document.getElementById('roll-button').outerHTML, 
+        iHTML: document.getElementById('roll-button').innerHTML,
+        dis: document.getElementById('roll-button').disabled, 
+        click: document.getElementById('roll-button').onclick 
+    };
     document.getElementById('roll-button').disabled = false;
-    document.getElementById('roll-button-label').innerHTML = 'Roll to attempt ' + game_backup.abilities[request_data.request.subtype_key].name;
+    document.getElementById('roll-button-label').innerHTML = 'Roll to attempt ' + 
+        game_backup.abilities[request_data.request.subtype_key].name;
     document.getElementById('roll-button').onclick = roll20;
     options.set('roll-button', request_data);
 });
